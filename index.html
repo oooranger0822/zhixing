@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#245de8">
+  <meta name="description" content="知行，让班级通知与学习待办清晰有序。">
+  <title>首页 · 知行</title>
+  <link rel="stylesheet" href="./css/home.css">
+  <script type="module" src="./js/home.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳转到主要内容</a>
+  <aside class="sidebar" aria-label="工作台导航">
+    <a class="brand" href="#overview" aria-label="知行首页"><span class="brand-mark" aria-hidden="true">知</span><span>知行<small>校园信息工作台</small></span></a>
+    <p class="nav-label">我的空间</p>
+    <nav class="navigation" aria-label="首页分区">
+      <a href="#overview" aria-current="location"><span aria-hidden="true">▦</span>首页概览</a>
+      <a href="#highlights"><span aria-hidden="true">☆</span>今日重点</a>
+      <a href="#notifications"><span aria-hidden="true">☷</span>最新通知</a>
+      <a href="#tasks"><span aria-hidden="true">☑</span>近期待办</a>
+    </nav>
+    <div class="sidebar-note"><span class="note-line"></span><strong>知有方向，行有章法。</strong><p>把纷繁消息理清，<br>把时间留给值得的事。</p></div>
+    <div class="sidebar-footer"><span class="mini-mark">知行</span><span>学习 · 有序发生</span></div>
+  </aside>
+
+  <div class="workspace" id="overview">
+    <header class="topbar"><div><span class="breadcrumb">我的空间</span><span class="slash">/</span><span>首页概览</span></div><span class="topbar-caption">ZHIXING <span> / </span> WORKSPACE</span></header>
+    <main id="main">
+      <section class="welcome" aria-labelledby="welcome-title">
+        <div><p class="eyebrow">每一天，从清晰开始</p><h1 id="welcome-title">你好，欢迎回到知行<span class="hello-dot">。</span></h1><p class="welcome-copy">重要的信息，接下来的计划，都在这里。</p></div>
+        <div class="welcome-actions"><time id="today-date"></time><button class="button" id="refresh" type="button"><span aria-hidden="true">↻</span> 刷新概览</button></div>
+      </section>
+
+      <div class="global-status"><span class="status-dot" aria-hidden="true"></span><p id="sync-status" role="status" aria-live="polite">正在读取概览…</p></div>
+      <p id="subscription-error" class="error-banner" role="alert" hidden></p>
+      <noscript><p class="error-banner">请启用 JavaScript 以读取通知和待办任务。</p></noscript>
+
+      <section class="stats" aria-label="数据概览">
+        <a class="stat-card" href="#notifications"><div class="stat-top"><span>通知总数</span><span class="stat-icon" aria-hidden="true">☷</span></div><strong id="notification-count">—</strong><span class="stat-bottom">全部已收录通知 <span aria-hidden="true">↗</span></span></a>
+        <a class="stat-card" href="#notifications"><div class="stat-top"><span>未读通知</span><span class="stat-icon" aria-hidden="true">◉</span></div><strong id="unread-count">—</strong><span class="stat-bottom">留意尚未阅读的消息 <span aria-hidden="true">↗</span></span></a>
+        <a class="stat-card stat-primary" href="#tasks"><div class="stat-top"><span>待办任务</span><span class="stat-icon" aria-hidden="true">✓</span></div><strong id="pending-count">—</strong><span class="stat-bottom">一步一步，完成你的计划 <span aria-hidden="true">↗</span></span></a>
+      </section>
+      <p id="stats-error" class="error-banner" role="alert" hidden></p>
+
+      <div class="dashboard-grid">
+        <section class="panel highlights-panel" id="highlights" aria-labelledby="highlights-title"><header class="panel-heading"><div><div class="heading-line"><span class="section-marker" aria-hidden="true"></span><h2 id="highlights-title">今日重点通知</h2></div><p>今天的全部通知，重要信息优先呈现</p></div><span class="panel-label">TODAY</span></header><div id="highlight-list" class="highlight-list"><p class="loading">正在读取今日通知…</p></div></section>
+
+        <section class="panel tasks-panel" id="tasks" aria-labelledby="tasks-title"><header class="panel-heading"><div><div class="heading-line"><span class="section-marker" aria-hidden="true"></span><h2 id="tasks-title">近期待办任务</h2></div><p>按截止时间排列 · 最多 5 项</p></div><span class="panel-label">TO DO</span></header><div id="task-list" class="task-list"><p class="loading">正在读取待办任务…</p></div><footer class="panel-footer">先处理临近截止的事，给自己多一点从容。</footer></section>
+
+        <section class="panel notifications-panel" id="notifications" aria-labelledby="notifications-title"><header class="panel-heading"><div><div class="heading-line"><span class="section-marker" aria-hidden="true"></span><h2 id="notifications-title">最新通知</h2></div><p>按发布时间倒序 · 最近 6 条</p></div><span class="panel-label">UPDATES</span></header><div id="notification-list" class="notification-list"><p class="loading">正在读取最新通知…</p></div></section>
+      </div>
+      <section class="panel mobile-profile" id="profile" aria-labelledby="profile-title">
+        <header class="panel-heading"><div class="heading-line"><span class="section-marker" aria-hidden="true"></span><h2 id="profile-title">我的</h2></div></header>
+        <p>个人中心尚未接入，账号与个人设置将在后续阶段提供。</p>
+      </section>
+      <footer class="page-footer"><span>知行 <span class="footer-divider">/</span> 让信息有序，让行动清晰</span><span>专注当下，向前一步。</span></footer>
+    </main>
+  </div>
+  <nav class="navigation mobile-navigation" aria-label="手机主导航">
+    <a href="#overview" aria-current="location"><span aria-hidden="true">▦</span>首页</a>
+    <a href="#notifications"><span aria-hidden="true">☷</span>通知</a>
+    <a class="mobile-task-link" href="#tasks"><span aria-hidden="true"><svg class="task-nav-icon" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m7.5 12 3 3 6-6"/></svg></span>任务</a>
+    <a href="#profile"><span aria-hidden="true">◎</span>我的</a>
+  </nav>
+</body>
+</html>
