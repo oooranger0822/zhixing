@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>通知中心</title>
+  <link rel="stylesheet" href="notification.css">
+</head>
+<body>
+  <main class="notification-page">
+    <section class="notification-panel" aria-labelledby="page-title">
+      <header class="panel-header">
+        <div class="title-wrap">
+          <span class="title-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M10 21h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+          </span>
+          <div>
+            <p class="eyebrow">MESSAGE CENTER</p>
+            <h1 id="page-title">通知中心</h1>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button class="simulate-btn" id="toggleMessageForm" type="button" aria-expanded="false" aria-controls="messageForm">
+            <span aria-hidden="true">＋</span>
+            模拟群消息
+          </button>
+          <button class="mark-all-btn" id="markAllRead" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m4 12 4 4L18 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="m12 16 2 2 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>全部已读</span>
+          </button>
+        </div>
+      </header>
+
+      <form class="message-form" id="messageForm" hidden>
+        <div class="form-field">
+          <label for="senderInput">发送人</label>
+          <input id="senderInput" name="sender" type="text" maxlength="30" placeholder="例如：班主任" required>
+        </div>
+        <div class="form-field form-content">
+          <label for="contentInput">内容</label>
+          <input id="contentInput" name="content" type="text" maxlength="200" placeholder="请输入群消息内容" required>
+        </div>
+        <div class="form-field">
+          <label for="typeInput">分类</label>
+          <select id="typeInput" name="type">
+            <option value="course">课程</option>
+            <option value="assignment">作业</option>
+            <option value="exam">考试</option>
+            <option value="activity">活动</option>
+            <option value="class">班级</option>
+            <option value="other">其他</option>
+          </select>
+        </div>
+        <button class="submit-message-btn" id="submitMessage" type="submit">提交</button>
+        <p class="form-status" id="formStatus" role="status" aria-live="polite"></p>
+      </form>
+
+      <nav class="tabs" aria-label="通知分类">
+        <button class="tab active" type="button" data-category="all">全部 <span class="tab-count" id="allCount">0</span></button>
+        <button class="tab" type="button" data-category="course">课程 <span class="tab-count" id="courseCount">0</span></button>
+        <button class="tab" type="button" data-category="assignment">作业 <span class="tab-count" id="assignmentCount">0</span></button>
+        <button class="tab" type="button" data-category="exam">考试 <span class="tab-count" id="examCount">0</span></button>
+        <button class="tab" type="button" data-category="activity">活动 <span class="tab-count" id="activityCount">0</span></button>
+        <button class="tab" type="button" data-category="class">班级 <span class="tab-count" id="classCount">0</span></button>
+        <button class="tab" type="button" data-category="other">其他 <span class="tab-count" id="otherCount">0</span></button>
+      </nav>
+
+      <div class="list-container" id="notificationList" aria-live="polite"></div>
+
+      <footer class="panel-footer">
+        <button class="load-more" id="loadMore" type="button">加载更多通知</button>
+      </footer>
+    </section>
+  </main>
+
+  <script type="module" src="notification.js"></script>
+</body>
+</html>
