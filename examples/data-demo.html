@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>知行 · 公共数据演示</title>
+  <style>
+    body { max-width: 850px; margin: 32px auto; padding: 0 20px; font-family: system-ui, sans-serif; line-height: 1.6; color: #243047; }
+    fieldset { margin: 20px 0; border: 1px solid #cbd5e1; border-radius: 8px; }
+    label { display: block; margin: 12px 0; }
+    input, textarea, select { display: block; box-sizing: border-box; width: 100%; padding: 8px; font: inherit; }
+    button { padding: 8px 16px; margin: 8px 0; cursor: pointer; }
+    button:disabled { cursor: not-allowed; }
+    #alert { color: #a32020; white-space: pre-wrap; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #f1f5f9; padding: 16px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>知行公共数据演示</h1>
+    <p>通过 localhost 或 HTTPS 打开本页。只有点击操作按钮才会保存数据。</p>
+    <p id="alert" role="alert"></p>
+    <button id="refresh-data" type="button">刷新数据</button>
+    <fieldset id="workspace" disabled>
+      <legend>通知与任务操作</legend>
+      <form id="notification-form">
+        <h2>添加通知</h2>
+        <label>发送人<input id="sender-input" required value="学习委员"></label>
+        <label>来源<input id="source-input" required value="班级群"></label>
+        <label>通知原文<textarea id="content-input" required rows="3"></textarea></label>
+        <button type="submit">添加通知</button>
+      </form>
+      <section aria-labelledby="extract-heading">
+        <h2 id="extract-heading">通知转任务</h2>
+        <label>来源通知<select id="notification-select"></select></label>
+        <label>任务标题<input id="title-input" value="处理班级通知"></label>
+        <p>截止时间未确认，保存为 null。</p>
+        <button id="extract-button" type="button">生成任务</button>
+      </section>
+      <section aria-labelledby="task-heading">
+        <h2 id="task-heading">任务完成状态</h2>
+        <label>选择任务<select id="task-select"></select></label>
+        <button id="toggle-button" type="button">完成 / 取消完成</button>
+      </section>
+    </fieldset>
+    <h2>当前数据</h2>
+    <pre id="snapshot">正在读取数据……</pre>
+  </main>
+  <script type="module">
+    import * as data from '../js/data.js';
+
+    const elements = Object.fromEntries([
+      'alert', 'refresh-data', 'workspace', 'notification-form', 'sender-input',
+      'source-input', 'content-input', 'notification-select', 'title-input',
+      'extract-button', 'task-select', 'toggle-button', 'snapshot',
+    ].map(id => [id, document.getElementById(id)]));
+    const state = {
+      notifications: [], tasks: [], loadingFailed: true, saving: false, stop: null,
+    };
+
+    function showError(error) {
+      elements.alert.textContent = error instanceof data.DataError
+        ? `${error.code}：${error.message}`
+        : '操作异常，请检查浏览器权限后重试。';
+      console.error(error);
+    }
+
+    function fillOptions(select, rows, label) {
+      const previousId = select.value;
+      select.replaceChildren();
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = '请选择';
+      select.append(placeholder);
+      for (const row of rows) {
+        const option = document.createElement('option');
+        option.value = row.id;
+        option.textContent = label(row);
+        select.append(option);
+      }
+      select.value = rows.some(row => row.id === previousId) ? previousId : '';
+    }
+
+    function reload() {
+      elements.workspace.disabled = true;
+      state.loadingFailed = true;
+      try {
+        const notificationRows = data.getNotifications();
+        const taskRows = data.getTasks();
+        state.notifications = notificationRows;
+        state.tasks = taskRows;
+        fillOptions(elements['notification-select'], notificationRows,
+          row => `${row.sender}：${row.content} [${row.extractionStatus}]`);
+        fillOptions(elements['task-select'], taskRows,
+          row => `${row.title} [${row.status}]`);
+        elements.snapshot.textContent = JSON.stringify({
+          notifications: notificationRows, tasks: taskRows,
+        }, null, 2);
+        elements.alert.textContent = '';
+        state.loadingFailed = false;
+      } catch (error) {
+        elements.snapshot.textContent = '读取失败，编辑已禁用。请处理读取错误后刷新。';
+        showError(error);
+      } finally {
+        elements.workspace.disabled = state.loadingFailed || state.saving;
+      }
+      return !state.loadingFailed;
+    }
+
+    async function runWrite(operation) {
+      if (state.saving || !reload()) return;
+      state.saving = true;
+      elements.workspace.disabled = true;
+      let writeFailure;
+      try {
+        await operation();
+      } catch (error) {
+        writeFailure = error;
+      } finally {
+        state.saving = false;
+        // 写入可能部分成功，任何结果都重新读取；不自动重复写入。
+        const recovered = reload();
+        if (writeFailure !== undefined) {
+          if (recovered) showError(writeFailure);
+          else console.error('写入失败，且重新读取失败：', writeFailure);
+        }
+      }
+    }
+
+    elements['notification-form'].addEventListener('submit', event => {
+      event.preventDefault();
+      void runWrite(async () => {
+        const notification = await data.addNotification({
+          sender: elements['sender-input'].value,
+          source: elements['source-input'].value,
+          content: elements['content-input'].value,
+          type: 'other',
+        });
+        // 同页订阅已刷新选项；最终 reload 会保留此选择。
+        elements['notification-select'].value = notification.id;
+      });
+    });
+
+    elements['extract-button'].addEventListener('click', () => {
+      void runWrite(async () => {
+        const sourceId = elements['notification-select'].value;
+        if (!sourceId) throw new data.DataError('VALIDATION', '请选择来源通知。');
+        const created = await data.createTaskFromNotification(sourceId, {
+          title: elements['title-input'].value,
+          deadline: null,
+          deadlineText: '待确认',
+        });
+        elements['task-select'].value = created.id;
+      });
+    });
+
+    elements['toggle-button'].addEventListener('click', () => {
+      void runWrite(async () => {
+        const selected = state.tasks.find(row => row.id === elements['task-select'].value);
+        if (!selected) throw new data.DataError('NOT_FOUND', '请选择有效任务。');
+        await data.updateTask(selected.id, {
+          status: selected.status === 'pending' ? 'completed' : 'pending',
+        });
+      });
+    });
+
+    function attach() {
+      if (state.stop === null) state.stop = data.subscribe(reload);
+      reload();
+    }
+    elements['refresh-data'].addEventListener('click', reload);
+    window.addEventListener('pagehide', () => {
+      if (state.stop !== null) {
+        state.stop();
+        state.stop = null;
+      }
+    });
+    window.addEventListener('pageshow', attach);
+    attach();
+  </script>
+</body>
+</html>
