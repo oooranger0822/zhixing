@@ -34,6 +34,28 @@ function date(value, field, nullable = false) {
 function enumValue(value, choices, field) {
   if (!choices.includes(value)) fail('VALIDATION', `${field} 值无效`);
 }
+function validateExtraction(value) {
+  if (value === null) return;
+  const required = ['type', 'course', 'title', 'content', 'deadline', 'deadlineText', 'confidence'];
+  fields(value, required);
+  if (required.some(field => !Object.hasOwn(value, field))) fail('VALIDATION', 'extraction 必须包含完整识别字段');
+  enumValue(value.type, TYPES, 'extraction.type');
+  for (const [field, limit] of Object.entries({ course: 200, title: 300, content: 5000, deadlineText: 5000 })) {
+    string(value[field], `extraction.${field}`);
+    if (value[field].length > limit) fail('VALIDATION', `extraction.${field} 超过长度限制`);
+  }
+  date(value.deadline, 'extraction.deadline', true);
+  if (value.deadline !== null) {
+    // Date.parse 会将 2 月 30 日等日期归一化；识别结果不能接受这种无效日期。
+    const [year, month, day] = value.deadline.slice(0, 10).split('-').map(Number);
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if (year === 0 || day > days[month - 1]) fail('VALIDATION', 'extraction.deadline 日期无效');
+  }
+  if (typeof value.confidence !== 'number' || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1) {
+    fail('VALIDATION', 'extraction.confidence 必须是 0 到 1 的有限数字');
+  }
+}
 function validate(kind, item) {
   object(item);
   string(item.id, 'id', true);
@@ -42,6 +64,8 @@ function validate(kind, item) {
     string(item.summary, 'summary');
     enumValue(item.type, TYPES, 'type');
     enumValue(item.extractionStatus, EXTRACTION, 'extractionStatus');
+    // 兼容旧记录；显式提供 extraction 时必须是 null 或完整合法对象。
+    if (Object.hasOwn(item, 'extraction')) validateExtraction(item.extraction);
     date(item.time, 'time');
     for (const field of ['isImportant', 'isRead']) {
       if (typeof item[field] !== 'boolean') fail('VALIDATION', `${field} 必须为布尔值`);
@@ -112,8 +136,8 @@ function fields(data, allowed) {
   }
 }
 function notification(data) {
-  fields(data, ['sender', 'source', 'content', 'type', 'summary', 'time', 'isImportant', 'isRead', 'extractionStatus']);
-  const row = { id: id('notification'), type: 'other', summary: '', time: new Date().toISOString(), isImportant: false, isRead: false, extractionStatus: 'none', ...data };
+  fields(data, ['sender', 'source', 'content', 'type', 'summary', 'time', 'isImportant', 'isRead', 'extractionStatus', 'extraction']);
+  const row = { id: id('notification'), type: 'other', summary: '', time: new Date().toISOString(), isImportant: false, isRead: false, extractionStatus: 'none', extraction: null, ...data };
   validate('notifications', row);
   if (row.extractionStatus === 'confirmed') fail('VALIDATION', 'confirmed 只能由任务生成流程设置');
   return row;
@@ -170,7 +194,7 @@ function update(kind, id, changes) {
     const rows = read(kind);
     const original = requireRow(rows, id);
     const allowed = kind === 'notifications'
-      ? ['sender', 'source', 'type', 'summary', 'time', 'isImportant', 'isRead', 'extractionStatus']
+      ? ['sender', 'source', 'type', 'summary', 'time', 'isImportant', 'isRead', 'extractionStatus', 'extraction']
       : ['title', 'course', 'content', 'deadline', 'deadlineText', 'status'];
     // ID、原始通知 content、任务来源及系统时间不可由页面改写。
     fields(changes, allowed);

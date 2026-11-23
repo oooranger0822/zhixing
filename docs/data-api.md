@@ -14,6 +14,81 @@
 
 通知必填 `sender`、`source`、`content`（非空字符串）；可选 `type` 默认 `other`，`summary` 默认空串，`time` 默认当前时间，`isImportant` / `isRead` 默认 false，`extractionStatus` 默认 `none`。
 
+可选 `extraction` 保存 AI 响应的完整 `data` 对象（不包含外层 `success`），新通知默认 `null`。
+`addNotification()` 和 `updateNotification()` 均支持该字段，不新增保存接口。
+旧通知没有该字段时保持原样返回，读取不会迁移或写回；使用 `notification.extraction ?? null` 判断是否存在草稿。
+
+### AI 识别与人工确认（B / C 对接）
+
+`extraction` 为 `null` 或包含以下全部字段的对象，不接受额外字段、缺失字段或显式 `undefined`：
+
+| 字段 | 校验 |
+| --- | --- |
+| type | `course / assignment / exam / activity / class / other` |
+| course | 字符串，最多 200 字符，不明确为空串 |
+| title | 字符串，最多 300 字符，可为空串，生成任务时必须人工补全非空标题 |
+| content | 字符串，最多 5000 字符，可为空串；与不可改写的通知原文 content 分开保存 |
+| deadline | 带时区的合法 ISO 日期时间字符串，或 `null`；不推算模糊日期 |
+| deadlineText | 字符串，最多 5000 字符，没有时间描述为空串 |
+| confidence | 0 到 1 的有限数字，不能是字符串或布尔值，仅供参考 |
+
+B：仅在 HTTP 调用成功且 `payload.success === true` 后，使用一次写入同时保存识别结果和 pending 状态：
+
+```js
+import { updateNotification } from './js/data.js';
+
+// payload 为 /api/extract 的 JSON 响应，notificationId 为本次识别的来源 ID。
+try {
+  if (payload.success !== true) throw new Error('AI 识别未成功');
+  await updateNotification(notificationId, {
+    extraction: payload.data,
+    extractionStatus: 'pending',
+  });
+  // 保存成功后展示结果；使用 textContent / 表单 value，勿将 AI 文本插入 innerHTML。
+} catch (error) {
+  // 在页面显示保存失败，勿声称已经保存、勿自动创建任务。
+  // 若通知已被删除或已确认，重新读取；不能撤销 confirmed。
+}
+```
+
+仅设置 extraction 不会自动更改状态，也不会创建任务。AI 成功不等于用户确认。
+识别失败时不要用空结果覆盖上次草稿；尚未确认时可通过 `{ extraction: null, extractionStatus: 'none' }` 显式清除。
+若识别请求返回前 C 已完成确认，B 的上述 pending 写入会被拒绝，原确认状态及草稿保持不变。
+
+C：通过现有 `getNotifications()`（或 `getNotificationById(id)`）读取草稿，填入可编辑表单。
+当前 task.js 已有人工确认后生成任务的流程，但尚未使用 extraction 预填表单；此项由 C 接入，本次不修改页面代码。
+
+```js
+import { getNotifications, createTaskFromNotification } from './js/data.js';
+
+try {
+  const notification = getNotifications().find(row => row.id === selectedId);
+  if (!notification) throw new Error('来源通知不存在');
+  const draft = notification.extraction ?? null;
+  // draft 仅用于预填和展示；旧通知或无草稿时继续支持手工填写。
+} catch (error) {
+  // 显示读取错误，禁用依赖数据的操作。
+}
+
+// 仅在用户点击确认后执行；confirmedForm 为用户核对、编辑后的表单值。
+try {
+  const { title, course, content, deadline, deadlineText } = confirmedForm;
+  await createTaskFromNotification(selectedId, { title, course, content, deadline, deadlineText });
+} catch (error) {
+  // 处理重复任务、来源失效、校验或存储失败；重新读取实际状态。
+}
+```
+
+不要直接把整个 extraction 传给 `createTaskFromNotification()`：`type`、`confidence` 不属于任务字段，会被拒绝。
+成功生成任务后模块才设置 confirmed，同时保留 extraction 原始草稿；人工修改后的任务字段存入任务，不覆盖通知原文。
+既有手工任务生成流程不要求必须有 extraction 或 pending 状态，保持兼容。
+两方继续使用 `subscribe()` 在保存后重新读取；同页事件与同源跨标签事件机制不变。
+
+非法 extraction 写入抛出 `VALIDATION`，不会改变原通知、创建任务或发送成功事件。
+如果存储中已经存在非法 extraction，读取遵循既有 `CORRUPT_DATA` 策略，保留原始存储并明确报错，不静默丢弃记录或覆盖为空列表。
+结构校验不保证 AI 语义正确，原文依据和任务内容仍需人工核对。
+这些数据只在同源浏览器 LocalStorage 中共享；共用线上 AI API 不会同步三名队员不同电脑的数据。
+
 `confirmed` 只能由 `createTaskFromNotification` 在任务成功生成后设置（带来源的 `addTask` 也会进入此流程）。`addNotification` 仅允许以 `none` 或 `pending` 初始化；`updateNotification` 不允许直接传入 `extractionStatus: 'confirmed'`，即使原状态已经是 confirmed 也会抛出 `VALIDATION`。尚未确认的通知仍允许在 none / pending 之间切换；已确认通知可正常编辑其他允许字段，但不能撤销提取状态。
 
 任务必填 `title`；`course`、`content`、`deadlineText` 默认空串，`deadline` 和 `sourceNotificationId` 默认 null，`status` 默认 `pending`。`id`、`createdAt`、`completedAt` 由模块生成。
