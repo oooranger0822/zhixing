@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "outputDirectory": "public",
+  "functions": {
+    "api/extract.py": {
+      "maxDuration": 60,
+      "excludeFiles": "{.env,.env.*,**/*.env,.venv/**,venv/**,**/__pycache__/**,test_*.py,diagnose.py,*.log}"
+    }
+  }
+}
