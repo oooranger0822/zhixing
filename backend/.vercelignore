@@ -1,0 +1,11 @@
+.env
+.env.*
+*.env
+.venv
+venv
+__pycache__
+**/__pycache__
+*.pyc
+test_*.py
+diagnose.py
+*.log
