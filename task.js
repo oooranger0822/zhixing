@@ -456,11 +456,14 @@ function selectNotification(id) {
   const notification = extractState.notifications.find(n => n.id === id);
   if (!notification) return;
   extractState.selectedId = id;
-  taskTitleInput.value = suggestedTitle(notification);
-  taskContentInput.value = notification.content || '';
-  taskCourseInput.value = '';
-  taskDeadlineInput.value = '';
-  taskDeadlineTextInput.value = '';
+  if (!applyNotificationDraft(notification)) {
+    // 无 AI 草稿或非 pending：保留原来的手动预填逻辑。
+    taskTitleInput.value = suggestedTitle(notification);
+    taskContentInput.value = notification.content || '';
+    taskCourseInput.value = '';
+    taskDeadlineInput.value = '';
+    taskDeadlineTextInput.value = '';
+  }
   hideExtractError();
   renderNotificationPicker();
   refreshExtractSubmit();
@@ -491,6 +494,23 @@ function toLocalInputValue(iso) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// 把 AI 识别结果映射到任务表单；只取五个任务业务字段，忽略 type / confidence。
+function fillExtractionFields(extraction) {
+  taskTitleInput.value = extraction.title ? String(extraction.title).trim() : '';
+  taskCourseInput.value = extraction.course ? String(extraction.course) : '';
+  taskContentInput.value = extraction.content ? String(extraction.content) : '';
+  taskDeadlineInput.value = toLocalInputValue(extraction.deadline);
+  taskDeadlineTextInput.value = extraction.deadlineText ? String(extraction.deadlineText) : '';
+}
+
+// 从通知对象读取 AI 草稿并预填；仅 extraction 存在且状态为 pending 时生效。
+function applyNotificationDraft(notification) {
+  const extraction = notification?.extraction ?? null;
+  if (!extraction || notification.extractionStatus !== 'pending') return false;
+  fillExtractionFields(extraction);
+  return true;
+}
+
 // 接收 AI 识别结果并映射到任务确认表单；notificationId 必须对应真实存在的通知。
 async function receiveExtraction(payload) {
   const { notificationId, extractionResult } = payload ?? {};
@@ -511,12 +531,8 @@ async function receiveExtraction(payload) {
     throw new Error('该通知已生成任务，不能再次接收识别结果');
   }
 
-  // 字段映射 → 预填表单（用户仍可修改）。
-  taskTitleInput.value = String(extractionResult.title).trim();
-  taskCourseInput.value = extractionResult.course ? String(extractionResult.course) : '';
-  taskContentInput.value = extractionResult.content ? String(extractionResult.content) : '';
-  taskDeadlineInput.value = toLocalInputValue(extractionResult.deadline);
-  taskDeadlineTextInput.value = extractionResult.deadlineText ? String(extractionResult.deadlineText) : '';
+  // 字段映射 → 预填表单（用户仍可修改）；与真实草稿共用同一映射。
+  fillExtractionFields(extractionResult);
 
   extractState.selectedId = notificationId;
   hideExtractError();
