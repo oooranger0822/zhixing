@@ -331,9 +331,11 @@ listEl.addEventListener('click', event => {
 });
 
 listEl.addEventListener('keydown', event => {
-  if (event.target.closest('.task-card') && (event.key === 'Enter' || event.key === ' ')) {
+  const card = event.target.closest('.task-card');
+  // 只处理卡片本身的键盘激活，内部按钮保留浏览器原生 Enter / 空格行为。
+  if (event.target === card && (event.key === 'Enter' || event.key === ' ')) {
     event.preventDefault();
-    selectTask(event.target.closest('.task-card').dataset.id);
+    selectTask(card.dataset.id);
   }
 });
 

@@ -1,0 +1,118 @@
+/* 通知页、任务页共用；独立命名，避免覆盖各业务模块及首页样式。 */
+.with-site-navigation > main {
+  margin-left:228px;
+  min-width:0;
+}
+.site-sidebar {
+  position:fixed;
+  inset:0 auto 0 0;
+  width:228px;
+  padding:38px 22px 24px;
+  background:#fff;
+  border-right:1px solid #e9edf4;
+  z-index:10;
+  font-family:Inter,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+}
+.site-sidebar a { text-decoration:none; }
+.site-brand {
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding-left:9px;
+  color:#202d46;
+  font-size:25px;
+  font-weight:750;
+  letter-spacing:2px;
+}
+.site-brand-mark {
+  display:grid;
+  place-items:center;
+  width:43px;
+  height:47px;
+  border-radius:13px;
+  background:#245de8;
+  color:#fff;
+  transform:rotate(-5deg);
+}
+.site-brand small {
+  display:block;
+  margin-top:1px;
+  font-size:10px;
+  color:#718097;
+  font-weight:400;
+}
+.site-nav-label {
+  margin:52px 0 14px;
+  padding:0 17px;
+  color:#8994a7;
+  font-size:11px;
+  letter-spacing:2px;
+}
+.site-navigation { display:grid; gap:9px; }
+.site-navigation a {
+  display:flex;
+  align-items:center;
+  gap:14px;
+  min-height:44px;
+  padding:13px 17px;
+  border-radius:9px;
+  color:#67758c;
+  font-size:14px;
+  font-weight:500;
+  line-height:1.6;
+}
+.site-navigation a > span {
+  width:22px;
+  flex-shrink:0;
+  text-align:center;
+  font-size:21px;
+  line-height:1;
+}
+.site-navigation svg { display:block; margin:auto; color:#20A66A; }
+.site-navigation a:hover { background:#f5f7fc; color:#245de8; }
+.site-navigation a[aria-current] { background:#edf3ff; color:#245de8; font-weight:650; }
+.site-navigation .site-task-link[aria-current] { background:#E8F7EE; color:#20A66A; }
+.site-sidebar a:focus-visible { outline:3px solid #83a8ff; outline-offset:3px; }
+@media (min-width:769px) {
+  /* 与首页一致，个人中心占位入口仅在手机底栏展示。 */
+  .site-navigation a[href="./index.html#profile"] { display:none; }
+}
+@media (max-width:1150px) {
+  .site-sidebar { width:196px; padding-right:14px; padding-left:14px; }
+  .with-site-navigation > main { margin-left:196px; }
+}
+@media (max-width:900px) {
+  .site-sidebar { width:170px; padding:28px 12px 20px; }
+  .with-site-navigation > main { margin-left:170px; }
+  .site-brand { font-size:22px; gap:9px; padding-left:4px; }
+  .site-brand small { font-size:8px; letter-spacing:1px; }
+  .site-brand-mark { width:35px; height:40px; font-size:22px; }
+  .site-navigation a { padding:12px; font-size:12px; gap:10px; }
+}
+@media (max-width:768px) {
+  .with-site-navigation {
+    padding-bottom:calc(81px + env(safe-area-inset-bottom,0px));
+  }
+  .with-site-navigation > main { margin-left:0; }
+  .site-sidebar {
+    inset:auto 0 0;
+    width:auto;
+    padding:0 env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px);
+    border-right:0;
+    border-top:1px solid #e9edf4;
+    background:#fffffff5;
+  }
+  .site-brand,.site-nav-label { display:none; }
+  .site-navigation { grid-template-columns:repeat(4,minmax(0,1fr)); gap:0; }
+  .site-navigation a {
+    flex-direction:column;
+    justify-content:center;
+    gap:5px;
+    min-width:0;
+    min-height:64px;
+    padding:8px 3px;
+    border-radius:0;
+    font-size:12px;
+  }
+  .site-navigation a > span { font-size:19px; }
+}
