@@ -14,6 +14,11 @@ from flask import Flask, jsonify, request
 from urllib3.exceptions import ReadTimeoutError
 from werkzeug.exceptions import HTTPException
 
+if __package__:
+    from .access import AccessError, authenticate, consume_quota
+else:
+    from access import AccessError, authenticate, consume_quota
+
 MAX_CONTENT_LENGTH = 5000
 MAX_UPSTREAM_BYTES = 131072
 FIELDS = {"type", "course", "title", "content", "deadline", "deadlineText", "confidence"}
@@ -130,7 +135,7 @@ def call_deepseek(content, config):
         with requests.post(
             f"{base}/chat/completions", json=payload,
             headers={"Authorization": f"Bearer {key}"},
-            timeout=(10, 45), allow_redirects=False, stream=True,
+            timeout=(5, 35), allow_redirects=False, stream=True,
         ) as response:
             if response.status_code != 200:
                 category = {400: "invalid_request", 401: "authentication", 402: "insufficient_balance",
@@ -185,12 +190,16 @@ def call_deepseek(content, config):
 
 def create_app(test_config=None):
     # Tests are isolated from real local credentials.
-    if test_config is None:
+    if test_config is None and not os.getenv("VERCEL"):
         load_dotenv(Path(__file__).with_name(".env"), override=False)
     app = Flask(__name__)
     app.json.ensure_ascii = False
     app.config.update(
         MAX_CONTENT_LENGTH=65536,
+        VERCEL=os.getenv("VERCEL", ""),
+        AI_ACCESS_TOKENS=os.getenv("AI_ACCESS_TOKENS", ""),
+        UPSTASH_REDIS_REST_URL=os.getenv("UPSTASH_REDIS_REST_URL", ""),
+        UPSTASH_REDIS_REST_TOKEN=os.getenv("UPSTASH_REDIS_REST_TOKEN", ""),
         DEEPSEEK_API_KEY=os.getenv("DEEPSEEK_API_KEY", "").strip(),
         DEEPSEEK_BASE_URL=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").strip(),
         DEEPSEEK_MODEL=os.getenv("DEEPSEEK_MODEL", "deepseek-flash").strip(),
@@ -218,10 +227,11 @@ def create_app(test_config=None):
         if origin in allowed:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-            response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return response
 
     @app.errorhandler(ExtractionError)
+    @app.errorhandler(AccessError)
     def extraction_error(error):
         return jsonify(success=False, error={"code": error.code, "message": error.message}), error.status
 
@@ -240,6 +250,7 @@ def create_app(test_config=None):
     def extract():
         if request.method == "OPTIONS":
             return "", 204
+        member = authenticate(request.headers.get("Authorization", ""), app.config)
         if not request.is_json:
             raise ExtractionError("INVALID_CONTENT_TYPE", "请使用 application/json 请求。", 415)
         data = request.get_json()
@@ -247,6 +258,7 @@ def create_app(test_config=None):
             raise ExtractionError("INVALID_CONTENT", "请提供非空的 content 字符串，且不要包含额外字段。", 400)
         if len(data["content"]) > MAX_CONTENT_LENGTH:
             raise ExtractionError("CONTENT_TOO_LONG", "通知内容不能超过 5000 个字符。", 400)
+        consume_quota(member, app.config)
         result = call_deepseek(data["content"].strip(), app.config)
         return jsonify(success=True, data=result)
 

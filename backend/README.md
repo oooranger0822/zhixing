@@ -1,6 +1,7 @@
 # 知行 AI 提取后端
 
 独立 Flask 服务：接收通知 → DeepSeek → 校验 JSON → 返回人工确认草稿。
+公网部署见 [Vercel 部署与三人联调](VERCEL.md)，包含认证、共享配额、控制台步骤和线上测试。
 不读写 LocalStorage，不保存通知、不自动创建任务，不改变现有前端和 `js/data.js`。
 
 ## 本地安装和启动（PowerShell，在项目根目录执行）
@@ -97,7 +98,7 @@ Windows PowerShell 5.1 对未声明 charset 的 JSON 响应可能按旧编码解
 | 502 | 上游鉴权/调用失败、JSON 或字段校验失败 |
 | 500 | 未预期的服务异常，仅返回通用信息 |
 
-连接超时 10 秒，读取超时 45 秒（网络读取等待时限，不是整次请求的硬总时限）；不自动重试，避免重复付费。
+连接超时 5 秒，读取超时 35 秒（网络读取等待时限，不是整次请求的硬总时限）；不自动重试，避免重复付费。
 不返回原始上游错误、请求头、密钥或原始模型响应；应用不记录通知内容。
 
 截止时间采用保守校验：支持原文中的完整 ISO 时间戳，以及含“北京时间”的完整中文年月日和 `HH:mm[:ss]`。
@@ -108,7 +109,7 @@ Windows PowerShell 5.1 对未声明 charset 的 JSON 响应可能按旧编码解
 B：展示提取草稿和错误提示；用户点击识别才发送原文，禁用重复提交。
 C：人工确认后将任务字段传给现有 `createTaskFromNotification()`；`type` 属于通知分类，`confidence` 仅供展示，不直接传入任务接口。
 
-CORS 不是身份认证；无 Origin 的命令行请求可访问本地服务。若部署到公网，必须在入口配置身份认证、调用配额/限流和 HTTPS，并使用生产 WSGI 服务；本轮不实现账号系统。
+CORS 不是身份认证；本地无令牌配置时可直接访问。Vercel 部署要求队员令牌和 Redis 共享配额，详见部署文档；不实现账号系统。
 
 官方协议参考：https://api-docs.deepseek.com/guides/json_mode/ 、https://api-docs.deepseek.com/api/create-chat-completion/
 
