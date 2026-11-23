@@ -1,8 +1,9 @@
-import { getNotifications, addNotification, updateNotification, subscribe } from '../js/data.js';
+import { getNotifications, addNotification, updateNotification, subscribe } from './js/data.js';
 
 let notifications = [];
 let activeCategory = 'all';
 let visibleCount = 5;
+let loadError = null;
 
 const list = document.getElementById('notificationList');
 const tabs = document.querySelectorAll('.tab');
@@ -90,6 +91,10 @@ function updateCounts() {
 }
 
 function renderNotifications() {
+  if (loadError) {
+    showError(loadError);
+    return;
+  }
   const filtered = getFilteredNotifications();
   const visible = filtered.slice(0, visibleCount);
 
@@ -133,7 +138,7 @@ function showError(error) {
   const message = error?.message || '无法读取通知数据，请稍后重试';
   list.innerHTML = `
     <div class="empty-state">
-      <div><strong>通知加载失败</strong>${escapeHtml(message)}</div>
+      <div><strong>通知加载失败</strong>${escapeHtml(message)}<br><button type="button" class="load-more" data-action="retry">重新加载</button></div>
     </div>`;
   markAllButton.disabled = true;
   loadMoreButton.disabled = true;
@@ -142,9 +147,15 @@ function showError(error) {
 function loadNotifications() {
   try {
     notifications = getNotifications();
+    loadError = null;
     renderNotifications();
   } catch (error) {
     notifications = [];
+    loadError = error;
+    document.getElementById('allCount').textContent = '—';
+    Object.keys(typeNames).forEach(category => {
+      document.getElementById(`${category}Count`).textContent = '—';
+    });
     showError(error);
   }
 }
@@ -176,6 +187,10 @@ markAllButton.addEventListener('click', async () => {
 });
 
 list.addEventListener('click', async event => {
+  if (event.target.closest('[data-action="retry"]')) {
+    loadNotifications();
+    return;
+  }
   const action = event.target.closest('.notice-action');
   if (!action || action.disabled) return;
 
