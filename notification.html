@@ -53,6 +53,10 @@
           <label for="senderInput">发送人</label>
           <input id="senderInput" name="sender" type="text" maxlength="30" placeholder="例如：班主任" required>
         </div>
+        <div class="form-field">
+          <label for="sourceInput">消息来源</label>
+          <input id="sourceInput" name="source" type="text" maxlength="50" placeholder="例如：数据结构课程群" required>
+        </div>
         <div class="form-field form-content">
           <label for="contentInput">内容</label>
           <input id="contentInput" name="content" type="text" maxlength="200" placeholder="请输入群消息内容" required>
@@ -68,8 +72,32 @@
             <option value="other">其他</option>
           </select>
         </div>
-        <button class="submit-message-btn" id="submitMessage" type="submit">提交</button>
+        <div class="form-field form-token">
+          <label for="aiTokenInput">AI 令牌（可选，仅本次会话内存）</label>
+          <input id="aiTokenInput" name="aiToken" type="password" maxlength="128" autocomplete="off" placeholder="粘贴 B 的队员令牌，仅用于 AI 识别">
+        </div>
+        <div class="form-actions">
+          <button class="ai-recognize-btn" id="aiRecognize" type="button">AI 识别</button>
+          <button class="submit-message-btn" id="submitMessage" type="submit">提交</button>
+        </div>
         <p class="form-status" id="formStatus" role="status" aria-live="polite"></p>
+        <button class="ai-retry-btn" id="aiRetrySave" type="button" hidden>重试保存识别结果</button>
+
+        <section class="ai-result" id="aiResult" hidden aria-label="AI 识别结果">
+          <div class="ai-result-head">
+            <strong>AI 识别结果（已保存为待确认）</strong>
+            <button class="ai-result-close" id="aiResultClose" type="button" aria-label="关闭">×</button>
+          </div>
+          <dl class="ai-result-list">
+            <div><dt>分类</dt><dd id="aiPreviewType"></dd></div>
+            <div><dt>课程</dt><dd id="aiPreviewCourse"></dd></div>
+            <div><dt>任务标题</dt><dd id="aiPreviewTitle"></dd></div>
+            <div><dt>任务要求</dt><dd id="aiPreviewContent"></dd></div>
+            <div><dt>截止时间</dt><dd id="aiPreviewDeadline"></dd></div>
+            <div><dt>截止描述</dt><dd id="aiPreviewDeadlineText"></dd></div>
+            <div><dt>置信度</dt><dd id="aiPreviewConfidence"></dd></div>
+          </dl>
+        </section>
       </form>
 
       <nav class="tabs" aria-label="通知分类">

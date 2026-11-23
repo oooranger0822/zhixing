@@ -4,6 +4,9 @@ let notifications = [];
 let activeCategory = 'all';
 let visibleCount = 5;
 let loadError = null;
+let aiBusy = false;
+let pendingSaveId = null;
+let pendingSaveData = null;
 
 const list = document.getElementById('notificationList');
 const tabs = document.querySelectorAll('.tab');
@@ -14,9 +17,22 @@ const toggleMessageForm = document.getElementById('toggleMessageForm');
 const messageForm = document.getElementById('messageForm');
 const senderInput = document.getElementById('senderInput');
 const contentInput = document.getElementById('contentInput');
+const sourceInput = document.getElementById('sourceInput');
 const typeInput = document.getElementById('typeInput');
 const submitMessage = document.getElementById('submitMessage');
 const formStatus = document.getElementById('formStatus');
+const aiTokenInput = document.getElementById('aiTokenInput');
+const aiRecognizeButton = document.getElementById('aiRecognize');
+const aiResult = document.getElementById('aiResult');
+const aiResultClose = document.getElementById('aiResultClose');
+const aiRetrySave = document.getElementById('aiRetrySave');
+const aiPreviewType = document.getElementById('aiPreviewType');
+const aiPreviewCourse = document.getElementById('aiPreviewCourse');
+const aiPreviewTitle = document.getElementById('aiPreviewTitle');
+const aiPreviewContent = document.getElementById('aiPreviewContent');
+const aiPreviewDeadline = document.getElementById('aiPreviewDeadline');
+const aiPreviewDeadlineText = document.getElementById('aiPreviewDeadlineText');
+const aiPreviewConfidence = document.getElementById('aiPreviewConfidence');
 
 const typeNames = {
   course: '课程',
@@ -217,12 +233,14 @@ toggleMessageForm.addEventListener('click', () => {
 
 messageForm.addEventListener('submit', async event => {
   event.preventDefault();
+  if (aiBusy) return;
 
   const sender = senderInput.value.trim();
+  const source = sourceInput.value.trim();
   const content = contentInput.value.trim();
-  if (!sender || !content) {
+  if (!sender || !source || !content) {
     formStatus.className = 'form-status error';
-    formStatus.textContent = '请填写发送人和消息内容';
+    formStatus.textContent = '请填写发送人、消息来源和消息内容';
     return;
   }
 
@@ -233,14 +251,15 @@ messageForm.addEventListener('submit', async event => {
   try {
     await addNotification({
       sender,
-      source: '模拟群消息',
+      source,
       content,
       type: typeInput.value,
       isImportant: false,
       isRead: false
     });
 
-    messageForm.reset();
+    clearFormKeepToken();
+    resetAiPreview();
     formStatus.className = 'form-status success';
     formStatus.textContent = '消息已提交';
     activeCategory = 'all';
@@ -253,6 +272,198 @@ messageForm.addEventListener('submit', async event => {
     submitMessage.disabled = false;
   }
 });
+
+// ---------- AI 识别 ----------
+const AI_ENDPOINT = 'https://zhixing-ai.vercel.app/api/extract';
+
+function showFormStatus(message, kind = '') {
+  formStatus.className = `form-status${kind ? ` ${kind}` : ''}`;
+  formStatus.textContent = message;
+}
+
+function setAiBusy(busy) {
+  aiBusy = busy;
+  aiRecognizeButton.disabled = busy;
+  submitMessage.disabled = busy;
+  aiRetrySave.disabled = busy;
+  aiRecognizeButton.textContent = busy ? '识别中…' : 'AI 识别';
+}
+
+function formatPreviewDeadline(iso) {
+  if (!iso) return '—';
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return iso;
+  const pad = number => String(number).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function resetAiPreview() {
+  aiResult.hidden = true;
+  aiPreviewType.textContent = '';
+  aiPreviewCourse.textContent = '';
+  aiPreviewTitle.textContent = '';
+  aiPreviewContent.textContent = '';
+  aiPreviewDeadline.textContent = '';
+  aiPreviewDeadlineText.textContent = '';
+  aiPreviewConfidence.textContent = '';
+}
+
+function showAiPreview(data) {
+  aiPreviewType.textContent = typeNames[data.type] || '其他';
+  aiPreviewCourse.textContent = data.course || '—';
+  aiPreviewTitle.textContent = data.title || '—';
+  aiPreviewContent.textContent = data.content || '—';
+  aiPreviewDeadline.textContent = formatPreviewDeadline(data.deadline);
+  aiPreviewDeadlineText.textContent = data.deadlineText || '—';
+  aiPreviewConfidence.textContent = typeof data.confidence === 'number' ? `${Math.round(data.confidence * 100)}%` : '—';
+  aiResult.hidden = false;
+}
+
+function clearFormKeepToken() {
+  const token = aiTokenInput.value;
+  messageForm.reset();
+  aiTokenInput.value = token;
+}
+
+async function requestAiExtraction(token, content) {
+  let response;
+  try {
+    response = await fetch(AI_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ content }),
+    });
+  } catch {
+    throw new Error('识别失败：无法连接 AI 服务，请检查网络后重试。');
+  }
+  let payload = null;
+  try { payload = await response.json(); } catch { /* 非 JSON 响应 */ }
+  if (!payload) throw new Error('识别失败：AI 服务返回异常，请稍后重试。');
+  return payload;
+}
+
+function setPendingSave(id, data) {
+  pendingSaveId = id;
+  pendingSaveData = data;
+  aiRetrySave.hidden = !id;
+}
+
+function clearPendingSave() {
+  pendingSaveId = null;
+  pendingSaveData = null;
+  aiRetrySave.hidden = true;
+}
+
+async function recognizeWithAI() {
+  if (aiBusy) return;
+  const sender = senderInput.value.trim();
+  const source = sourceInput.value.trim();
+  const content = contentInput.value.trim();
+  if (!sender || !source || !content) {
+    showFormStatus('请填写发送人、消息来源和消息内容', 'error');
+    return;
+  }
+  const token = aiTokenInput.value.trim();
+  if (!token) {
+    showFormStatus('请先填写 AI 令牌', 'error');
+    return;
+  }
+
+  setAiBusy(true);
+  showFormStatus('AI 识别中…');
+
+  // 阶段一：AI 请求（网络异常 / 后端非成功 / 响应异常）。
+  let payload;
+  try {
+    payload = await requestAiExtraction(token, content);
+  } catch (error) {
+    showFormStatus(error?.message || '识别失败：无法连接 AI 服务，请稍后重试。', 'error');
+    setAiBusy(false);
+    return;
+  }
+  if (payload.success !== true) {
+    const message = payload?.error?.message || 'AI 服务返回异常，请稍后重试';
+    showFormStatus(`识别失败：${message}`, 'error');
+    setAiBusy(false);
+    return;
+  }
+
+  // 阶段二：创建通知（取得 id）。
+  let created;
+  try {
+    created = await addNotification({
+      sender,
+      source,
+      content,
+      type: payload.data.type,
+      isImportant: false,
+      isRead: false,
+    });
+  } catch (error) {
+    showFormStatus(`通知创建失败：${error?.message || '未知错误'}`, 'error');
+    setAiBusy(false);
+    return;
+  }
+
+  // 阶段三：一次 updateNotification 保存 type + 完整 extraction + pending。
+  try {
+    await updateNotification(created.id, {
+      type: payload.data.type,
+      extraction: payload.data,
+      extractionStatus: 'pending',
+    });
+  } catch (error) {
+    // 消息已创建，仅识别结果未保存：保留 id 与识别结果，供「重试保存」。
+    setPendingSave(created.id, payload.data);
+    showAiPreview(payload.data);
+    clearFormKeepToken();
+    showFormStatus('消息已创建，但 AI 识别结果未保存，请重试。', 'error');
+    activeCategory = 'all';
+    tabs.forEach(tab => tab.classList.toggle('active', tab.dataset.category === 'all'));
+    loadNotifications();
+    setAiBusy(false);
+    return;
+  }
+
+  clearPendingSave();
+  showAiPreview(payload.data);
+  clearFormKeepToken();
+  showFormStatus('识别已保存为待确认，请在近期待办页人工确认并生成任务', 'success');
+  activeCategory = 'all';
+  tabs.forEach(tab => tab.classList.toggle('active', tab.dataset.category === 'all'));
+  loadNotifications();
+  setAiBusy(false);
+}
+
+async function retrySaveExtraction() {
+  if (aiBusy) return;
+  if (!pendingSaveId || !pendingSaveData) return;
+
+  setAiBusy(true);
+  showFormStatus('正在重试保存识别结果…');
+  try {
+    // 重试必须沿用原来的 notificationId，不再次 addNotification。
+    await updateNotification(pendingSaveId, {
+      type: pendingSaveData.type,
+      extraction: pendingSaveData,
+      extractionStatus: 'pending',
+    });
+    clearPendingSave();
+    showFormStatus('识别结果已保存为待确认', 'success');
+    loadNotifications();
+  } catch (error) {
+    showFormStatus(`重试保存失败：${error?.message || '未知错误'}，请重试。`, 'error');
+  } finally {
+    setAiBusy(false);
+  }
+}
+
+aiRecognizeButton.addEventListener('click', () => void recognizeWithAI());
+aiRetrySave.addEventListener('click', () => void retrySaveExtraction());
+aiResultClose.addEventListener('click', resetAiPreview);
 
 subscribe(loadNotifications);
 loadNotifications();
