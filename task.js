@@ -1,6 +1,7 @@
 import {
   getTasks,
   getNotifications,
+  getNotificationById,
   updateTask,
   createTaskFromNotification,
   subscribe,
@@ -28,6 +29,7 @@ const extractSubmitEl = document.getElementById('extractSubmit');
 const extractStatusEl = document.getElementById('extractStatus');
 const extractFormEl = document.getElementById('extractForm');
 const extractNotificationListEl = document.getElementById('extractNotificationList');
+const loadMockAiEl = document.getElementById('loadMockAi');
 const taskTitleInput = document.getElementById('taskTitleInput');
 const taskCourseInput = document.getElementById('taskCourseInput');
 const taskContentInput = document.getElementById('taskContentInput');
@@ -473,6 +475,75 @@ function buildDeadline() {
   return { deadline: d.toISOString(), deadlineText: text };
 }
 
+// ---------- 模拟 AI 识别结果接入（C 模块开发测试） ----------
+// 归一化的 AI 识别结果接收入口。未来 B 模块真实结果同样走本函数，仅替换数据来源。
+async function loadAiExtraction() {
+  // 开发阶段：返回模拟 JSON 中的识别结果（不含 notificationId）。
+  const { MOCK_AI_RESULT } = await import('./mock-ai.js');
+  return MOCK_AI_RESULT;
+}
+
+// ISO 时间字符串 → datetime-local 输入框所需格式（YYYY-MM-DDTHH:mm，浏览器本地时间）。
+function toLocalInputValue(iso) {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return '';
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// 接收 AI 识别结果并映射到任务确认表单；notificationId 必须对应真实存在的通知。
+async function receiveExtraction(payload) {
+  const { notificationId, extractionResult } = payload ?? {};
+  if (!notificationId || !extractionResult || typeof extractionResult !== 'object' || Array.isArray(extractionResult)) {
+    throw new Error('AI 识别数据缺少 notificationId 或 extractionResult');
+  }
+  if (!extractionResult.title || !String(extractionResult.title).trim()) {
+    throw new Error('AI 识别数据缺少任务标题（extractionResult.title）');
+  }
+
+  // 校验原通知真实存在；不存在则拒绝预填，避免生成孤立任务。
+  const source = getNotificationById(notificationId);
+  if (!source) {
+    throw new Error(`识别结果对应的通知不存在：${notificationId}`);
+  }
+  // 已生成任务的通知不可重复接收。
+  if (source.extractionStatus === 'confirmed') {
+    throw new Error('该通知已生成任务，不能再次接收识别结果');
+  }
+
+  // 字段映射 → 预填表单（用户仍可修改）。
+  taskTitleInput.value = String(extractionResult.title).trim();
+  taskCourseInput.value = extractionResult.course ? String(extractionResult.course) : '';
+  taskContentInput.value = extractionResult.content ? String(extractionResult.content) : '';
+  taskDeadlineInput.value = toLocalInputValue(extractionResult.deadline);
+  taskDeadlineTextInput.value = extractionResult.deadlineText ? String(extractionResult.deadlineText) : '';
+
+  extractState.selectedId = notificationId;
+  hideExtractError();
+  renderNotificationPicker();
+  refreshExtractSubmit();
+}
+
+// 「加载模拟AI识别结果」按钮处理：使用当前已选择通知的真实 ID 作为来源。
+async function handleLoadMockAi() {
+  if (!extractState.selectedId) {
+    showExtractError('请先选择来源通知，再加载模拟AI识别结果');
+    return;
+  }
+  hideExtractError();
+  try {
+    const extractionResult = await loadAiExtraction();
+    await receiveExtraction({
+      notificationId: extractState.selectedId,
+      extractionStatus: 'pending',
+      extractionResult,
+    });
+  } catch (error) {
+    showExtractError(error?.message || '加载模拟AI识别结果失败');
+    console.error(error);
+  }
+}
+
 // 生成失败（并发重复、来源失效等）后重新读取通知，同步「已生成任务」状态。
 function refreshExtractNotifications() {
   let rows;
@@ -542,6 +613,7 @@ extractNotificationListEl.addEventListener('click', event => {
   if (!option || option.disabled) return;
   selectNotification(option.dataset.id);
 });
+loadMockAiEl.addEventListener('click', () => void handleLoadMockAi());
 extractModalEl.addEventListener('click', event => {
   if (event.target === extractModalEl) closeExtractModal();
 });
