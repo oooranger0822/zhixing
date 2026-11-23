@@ -32,7 +32,77 @@ export async function runTests(source) {
     return { ...tab(), tab, values, localStorage, fail(key) { failKey = key; } };
   }
   const notice = { sender: '教务处', source: '班级群', content: '原始通知：周五提交报告', type: 'assignment' };
+  const extraction = { type: 'assignment', course: '程序设计', title: '提交报告', content: '提交程序设计课程报告',
+    deadline: null, deadlineText: '周五', confidence: 0.95 };
   async function test(name, action) { await action(); results.push(`PASS ${name}`); }
+  await test('AI 草稿保存、跨页读取、人工确认及原文保护', async () => {
+    const env = setup(); const a = env.api; const c = env.tab().api;
+    const n = await a.addNotification(notice);
+    assert(n.extraction === null, '新通知默认没有识别结果');
+    const events = [];
+    a.subscribe(event => events.push(event));
+    await a.updateNotification(n.id, { extraction: { ...extraction }, extractionStatus: 'pending' });
+    const saved = c.getNotifications()[0];
+    assert(JSON.stringify(saved.extraction) === JSON.stringify(extraction), '完整识别结果跨页可读');
+    assert(saved.extractionStatus === 'pending' && a.getTasks().length === 0, 'AI 成功不确认、不生成任务');
+    assert(saved.content === notice.content && saved.summary === '', '不覆盖原文和摘要');
+    assert(events.length === 1 && events[0].keys[0] === a.STORAGE_KEYS.notifications, '草稿保存触发通知订阅');
+    saved.extraction.title = '用户修改但尚未保存';
+    assert(c.getNotifications()[0].extraction.title === extraction.title, '读取对象修改不影响存储');
+    await rejects(() => c.createTaskFromNotification(n.id, extraction), 'VALIDATION');
+    const { title, course, content, deadline, deadlineText } = c.getNotifications()[0].extraction;
+    const t = await c.createTaskFromNotification(n.id, { title: title + '（已核对）', course, content, deadline, deadlineText });
+    assert(t.sourceNotificationId === n.id && t.title.endsWith('（已核对）'), '使用人工确认字段生成关联任务');
+    assert(c.getNotifications()[0].extractionStatus === 'confirmed', '生成成功后才确认');
+    assert(JSON.stringify(c.getNotifications()[0].extraction) === JSON.stringify(extraction), '确认保留完整 AI 草稿');
+    const before = env.values.get(a.STORAGE_KEYS.notifications);
+    await rejects(() => a.updateNotification(n.id, { extraction: { ...extraction, title: '迟到的 AI 结果' }, extractionStatus: 'pending' }), 'VALIDATION');
+    assert(env.values.get(a.STORAGE_KEYS.notifications) === before, '迟到响应不能撤销确认或覆盖草稿');
+    await rejects(() => c.createTaskFromNotification(n.id, { title }), 'DUPLICATE_TASK');
+  });
+  await test('旧通知兼容、清除草稿与 AI 字段校验', async () => {
+    const env = setup(); const a = env.api; const key = a.STORAGE_KEYS.notifications;
+    const n = await a.addNotification(notice);
+    delete n.extraction;
+    env.values.set(key, JSON.stringify([n]));
+    const legacy = env.values.get(key);
+    assert(a.getNotifications()[0].extraction === undefined, '旧通知无需迁移');
+    assert(env.values.get(key) === legacy && a.getDashboardStats().notificationCount === 1, '读取不写回且首页正常');
+    const invalid = [undefined, [], 'text', {}, { ...extraction, extra: true },
+      { ...extraction, type: 'unknown' }, { ...extraction, course: null }, { ...extraction, title: 3 },
+      { ...extraction, content: '字'.repeat(5001) }, { ...extraction, course: '字'.repeat(201) },
+      { ...extraction, title: '字'.repeat(301) }, { ...extraction, deadlineText: '字'.repeat(5001) },
+      ...[true, '0.9', NaN, Infinity, -0.1, 1.1].map(confidence => ({ ...extraction, confidence })),
+      ...['明天', '2026-11-23T18:00:00', '2026-02-30T18:00:00+08:00'].map(deadline => ({ ...extraction, deadline }))];
+    const events = []; a.subscribe(event => events.push(event));
+    for (const value of invalid) {
+      await rejects(() => a.updateNotification(n.id, { extraction: value, extractionStatus: 'pending' }), 'VALIDATION');
+      await rejects(() => a.addNotification({ ...notice, extraction: value }), 'VALIDATION');
+      assert(env.values.get(key) === legacy, '非法数据不破坏已有列表');
+    }
+    assert(events.length === 0, '非法草稿不发送成功事件');
+    await a.updateNotification(n.id, { extraction: { ...extraction, deadline: '2028-02-29T18:00:00+08:00', confidence: 0 }, extractionStatus: 'pending' });
+    assert(a.getNotifications()[0].extraction.deadline === '2028-02-29T18:00:00+08:00', '合法时区日期保留');
+    await a.updateNotification(n.id, { extraction: null, extractionStatus: 'none' });
+    assert(a.getNotifications()[0].extraction === null, '显式清除草稿');
+    const empty = await a.addNotification({ ...notice, extraction: { ...extraction, course: '', title: '', content: '', deadlineText: '', confidence: 1 } });
+    assert(empty.extractionStatus === 'none', '仅保存 extraction 不自动变更状态');
+    env.values.set(key, JSON.stringify([{ ...n, extraction: { ...extraction, confidence: 'invalid' } }]));
+    const damaged = env.values.get(key);
+    await rejects(() => a.getNotifications(), 'CORRUPT_DATA');
+    assert(env.values.get(key) === damaged, '已损坏存储仍按既有约定保留并报告，不静默丢弃');
+  });
+  await test('草稿写入失败与确认回滚保留 pending 结果', async () => {
+    const env = setup(); const a = env.api; const key = a.STORAGE_KEYS.notifications;
+    const n = await a.addNotification({ ...notice, extraction: { ...extraction }, extractionStatus: 'pending' });
+    const before = env.values.get(key);
+    const events = []; a.subscribe(event => events.push(event));
+    env.fail(key);
+    await rejects(() => a.updateNotification(n.id, { extraction: { ...extraction, title: '新结果' } }), 'STORAGE_WRITE_FAILED');
+    await rejects(() => a.createTaskFromNotification(n.id, { title: '人工确认' }), 'STORAGE_WRITE_FAILED');
+    assert(env.values.get(key) === before && a.getTasks().length === 0, '失败不丢草稿、不残留任务');
+    assert(events.length === 0, '失败不发送成功事件');
+  });
   await test('通知增读改删、校验、原文和 ID 保护', async () => {
     const { api: a } = setup();
     await rejects(() => a.addNotification({ ...notice, sender: '' }), 'VALIDATION');
