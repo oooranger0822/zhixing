@@ -3,6 +3,7 @@ import {
   getNotifications,
   getNotificationById,
   updateTask,
+  updateNotification,
   createTaskFromNotification,
   subscribe,
   DataError,
@@ -29,7 +30,6 @@ const extractSubmitEl = document.getElementById('extractSubmit');
 const extractStatusEl = document.getElementById('extractStatus');
 const extractFormEl = document.getElementById('extractForm');
 const extractNotificationListEl = document.getElementById('extractNotificationList');
-const loadMockAiEl = document.getElementById('loadMockAi');
 const taskTitleInput = document.getElementById('taskTitleInput');
 const taskCourseInput = document.getElementById('taskCourseInput');
 const taskContentInput = document.getElementById('taskContentInput');
@@ -443,6 +443,8 @@ function openExtractModal() {
   }
   extractState.notifications = rows;
   renderNotificationPicker();
+  const selectable = rows.filter(row => row.extractionStatus !== 'confirmed');
+  if (selectable.length === 1) selectNotification(selectable[0].id);
   extractModalEl.hidden = false;
   document.body.classList.add('modal-open');
 }
@@ -467,27 +469,35 @@ function selectNotification(id) {
   hideExtractError();
   renderNotificationPicker();
   refreshExtractSubmit();
+  if (!notification.isRead) {
+    void updateNotification(id, { isRead: true }).catch(error => {
+      showExtractError(`已读状态保存失败：${error?.message || '请重试'}`);
+    });
+  }
 }
 
 function buildDeadline() {
   const raw = taskDeadlineInput.value;
   const text = taskDeadlineTextInput.value.trim();
-  if (!raw) return { deadline: null, deadlineText: text };
+  if (!validDateParts(raw)) return { deadline: null, deadlineText: text };
   const d = new Date(raw);
   if (!Number.isFinite(d.getTime())) return { deadline: null, deadlineText: text };
   return { deadline: d.toISOString(), deadlineText: text };
 }
 
-// ---------- 模拟 AI 识别结果接入（C 模块开发测试） ----------
-// 归一化的 AI 识别结果接收入口。未来 B 模块真实结果同样走本函数，仅替换数据来源。
-async function loadAiExtraction() {
-  // 开发阶段：返回模拟 JSON 中的识别结果（不含 notificationId）。
-  const { MOCK_AI_RESULT } = await import('./mock-ai.js');
-  return MOCK_AI_RESULT;
+function validDateParts(value) {
+  if (typeof value !== 'string') return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?$/.exec(value);
+  if (!match) return false;
+  const [y, m, d, h, minute, second] = match.slice(1).map(part => Number(part || 0));
+  const leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return y > 0 && m >= 1 && m <= 12 && d >= 1 && d <= days[m - 1] && h < 24 && minute < 60 && second < 60;
 }
 
 // ISO 时间字符串 → datetime-local 输入框所需格式（YYYY-MM-DDTHH:mm，浏览器本地时间）。
 function toLocalInputValue(iso) {
+  if (!validDateParts(iso) || !/(?:Z|[+-]\d{2}:\d{2})$/.test(iso)) return '';
   const d = new Date(iso);
   if (!Number.isFinite(d.getTime())) return '';
   const pad = n => String(n).padStart(2, '0');
@@ -538,26 +548,6 @@ async function receiveExtraction(payload) {
   hideExtractError();
   renderNotificationPicker();
   refreshExtractSubmit();
-}
-
-// 「加载模拟AI识别结果」按钮处理：使用当前已选择通知的真实 ID 作为来源。
-async function handleLoadMockAi() {
-  if (!extractState.selectedId) {
-    showExtractError('请先选择来源通知，再加载模拟AI识别结果');
-    return;
-  }
-  hideExtractError();
-  try {
-    const extractionResult = await loadAiExtraction();
-    await receiveExtraction({
-      notificationId: extractState.selectedId,
-      extractionStatus: 'pending',
-      extractionResult,
-    });
-  } catch (error) {
-    showExtractError(error?.message || '加载模拟AI识别结果失败');
-    console.error(error);
-  }
 }
 
 // 生成失败（并发重复、来源失效等）后重新读取通知，同步「已生成任务」状态。
@@ -629,7 +619,6 @@ extractNotificationListEl.addEventListener('click', event => {
   if (!option || option.disabled) return;
   selectNotification(option.dataset.id);
 });
-loadMockAiEl.addEventListener('click', () => void handleLoadMockAi());
 extractModalEl.addEventListener('click', event => {
   if (event.target === extractModalEl) closeExtractModal();
 });
