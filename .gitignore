@@ -1,0 +1,29 @@
+# Local secrets (keep documented examples)
+.env
+.env.*
+*.env
+!.env.example
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+.vercel/
+# Private credentials and additional local Python tooling
+*.key
+*.pem
+*.p12
+*.pfx
+credentials.json
+secrets.json
+.mypy_cache/
+.ruff_cache/
+.tox/
+!.env.example
+!*.env.example
+!*.key.example
+!*.pem.example

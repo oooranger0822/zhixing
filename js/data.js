@@ -235,7 +235,7 @@ export function createTaskFromNotification(id, taskData) {
     checkSource(tasks, id);
     fields(taskData, ['title', 'course', 'content', 'deadline', 'deadlineText', 'status']);
     const row = task({ content: source.content, ...taskData, sourceNotificationId: id });
-    const next = notifications.map(item => item.id === id ? { ...item, extractionStatus: 'confirmed' } : item);
+    const next = notifications.map(item => item.id === id ? { ...item, extractionStatus: 'confirmed', isRead: true } : item);
     const store = storage();
     const oldTasks = store.getItem(STORAGE_KEYS.tasks);
     // LocalStorage 无多键事务：失败时回滚任务键，完成两次写入后再通知本页。

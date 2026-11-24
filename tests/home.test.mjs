@@ -140,9 +140,11 @@ assert.ok(text('highlight-list').includes(content), '原文安全按纯文本展
 assert.match(text('task-list'), /已逾期/);
 assert.match(text('task-list'), /截止待确认 · 下周讨论后确定/);
 const details = elements.get('highlight-list').querySelectorAll('details')[0];
+const markingRead = details.children[0].events.click();
 details.open = true;
-await api.updateNotification(important.id, { isRead: true });
+await markingRead;
 assert.equal(text('unread-count'), '1');
+assert.equal(api.getNotificationById(important.id).extractionStatus, 'none', '查看原文不确认 AI');
 assert.equal(elements.get('highlight-list').querySelectorAll('details')[0].open, true);
 console.log('PASS 实际公共接口订阅重读、排序、原文安全与展开状态保留');
 
@@ -263,3 +265,58 @@ assert.equal(window.intervals.size, 0);
 window.events.pageshow();
 assert.equal(activeSubscriptions, 1);
 console.log('PASS 无重复监听/订阅/定时器，删除通知后焦点合理回退');
+
+// 保存完成就应更新只读标签；输入保护只延后正文，不能延后已读反馈。
+const latencyNotice = await api.addNotification({ sender: '测试', source: '班群', content: '即时已读检查' });
+const latencyCard = cardById(latest, latencyNotice.id);
+const latencyInput = new Element('input');
+latencyInput.value = '未提交的输入';
+latencyCard.append(latencyInput);
+latencyInput.focus();
+const hasUnread = card => card.children[0].children.some(child => child.className === 'unread');
+assert.equal(hasUnread(latencyCard), true);
+const unreadBefore = api.getDashboardStats().unreadCount;
+const started = performance.now();
+await api.updateNotification(latencyNotice.id, { isRead: true });
+const savedIn = performance.now() - started;
+assert.equal(hasUnread(latencyCard), false, '输入期间保存成功也立即移除未读标签，无需 tick/失焦');
+assert.equal(text('unread-count'), String(unreadBefore - 1));
+assert.equal(document.activeElement, latencyInput);
+assert.equal(latencyInput.value, '未提交的输入');
+assert.equal(api.getNotificationById(latencyNotice.id).isRead, true);
+console.log(`PASS 保存及订阅立即更新已读标签（隔离内存耗时 ${savedIn.toFixed(2)}ms，非真实浏览器基准）`);
+
+// 锁尚未取得或写入失败时，不允许提前展示已读。
+refresh.focus();
+await api.updateNotification(latencyNotice.id, { isRead: false });
+const normalLock = scope.navigator.locks.request;
+let release;
+scope.navigator.locks.request = (_name, callback) => new Promise((resolve, reject) => {
+  release = () => { try { resolve(callback()); } catch (error) { reject(error); } };
+});
+const pendingDetails = cardById(latest, latencyNotice.id).querySelector('details');
+pendingDetails.open = false;
+const pendingRead = pendingDetails.children[0].events.click();
+assert.equal(api.getNotificationById(latencyNotice.id).isRead, false);
+assert.equal(hasUnread(cardById(latest, latencyNotice.id)), true);
+assert.equal(text('unread-count'), String(unreadBefore));
+release();
+await pendingRead;
+assert.equal(hasUnread(cardById(latest, latencyNotice.id)), false);
+assert.equal(text('unread-count'), String(unreadBefore - 1));
+scope.navigator.locks.request = normalLock;
+await api.updateNotification(latencyNotice.id, { isRead: false });
+const setItem = storage.setItem;
+storage.setItem = () => { throw new Error('quota'); };
+await pendingDetails.children[0].events.click();
+assert.equal(api.getNotificationById(latencyNotice.id).isRead, false);
+assert.equal(hasUnread(cardById(latest, latencyNotice.id)), true);
+assert.equal(text('unread-count'), String(unreadBefore));
+assert.match(text('subscription-error'), /已读状态保存失败/);
+storage.setItem = setItem;
+await pendingDetails.children[0].events.click();
+window.events.pagehide(); window.events.pageshow();
+assert.equal(api.getNotificationById(latencyNotice.id).isRead, true);
+assert.equal(hasUnread(cardById(latest, latencyNotice.id)), false);
+assert.equal(text('unread-count'), String(unreadBefore - 1));
+console.log('PASS 锁等待与写入失败不伪造已读，保存后立即更新，页面恢复仍正确');

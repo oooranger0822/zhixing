@@ -1,4 +1,4 @@
-import { getDashboardStats, getTodayHighlights, getNotifications, getRecentTasks, subscribe } from './data.js';
+import { getDashboardStats, getTodayHighlights, getNotifications, getRecentTasks, subscribe, updateNotification } from './data.js';
 
 const byId = id => document.getElementById(id);
 const typeLabels = { course: '课程', assignment: '作业', exam: '考试', activity: '活动', class: '班级', other: '通知' };
@@ -47,6 +47,17 @@ function notificationCard(item, highlight) {
   details.dataset.notificationId = item.id;
   const summary = node('summary', '', '查看通知原文');
   summary.dataset.action = 'toggle-original';
+  summary.addEventListener('click', async () => {
+    if (details.open) return; // Only actively opening the original marks it read.
+    try {
+      const current = getNotifications().find(row => row.id === item.id);
+      if (current && !current.isRead) await updateNotification(item.id, { isRead: true });
+    } catch (error) {
+      const banner = byId('subscription-error');
+      banner.hidden = false;
+      banner.textContent = `已读状态保存失败：${error?.message || '请重试'}`;
+    }
+  });
   details.append(summary, node('p', 'original', item.content));
   article.append(meta, node('h3', '', heading), node('p', 'notice-source', `${item.sender} · ${item.source}`), details);
   notificationViews.set(article, JSON.stringify(item));
@@ -144,11 +155,30 @@ function taskCard(item, index) {
 
 function renderList(id, read, render, emptyTitle, emptyDescription) {
   const container = byId(id);
-  // 输入过程中延后本分区刷新，失焦后重新读取，避免覆盖草稿或中断输入法。
-  if (container.contains(document.activeElement) && document.activeElement?.closest(editingSelector)) return true;
+  const editing = container.contains(document.activeElement) && document.activeElement?.closest(editingSelector);
   const focus = captureFocus(container);
   try {
     const rows = read();
+    // 只延后可能干扰输入的正文/排序；已保存的已读状态立即同步。
+    if (editing) {
+      if (id !== 'task-list') {
+        const byId = new Map(rows.map(row => [row.id, row]));
+        for (const card of container.children) {
+          const row = byId.get(card.dataset.notificationId);
+          if (!row) continue;
+          const meta = card.children[0];
+          const badge = Array.from(meta.children).find(child => child.className === 'unread');
+          if (row.isRead) badge?.remove();
+          else if (!badge) meta.insertBefore(node('span', 'unread', '未读'), meta.children[meta.children.length - 1] ?? null);
+          if (notificationViews.has(card)) {
+            const shown = JSON.parse(notificationViews.get(card));
+            shown.isRead = row.isRead;
+            notificationViews.set(card, JSON.stringify(shown));
+          }
+        }
+      }
+      return true;
+    }
     if (id !== 'task-list') {
       renderNotifications(container, rows, render, emptyTitle, emptyDescription);
       return true;

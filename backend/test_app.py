@@ -189,7 +189,24 @@ $results | ConvertTo-Json -Compress
             self.assertEqual(reply.json["data"]["deadline"], result["deadline"])
         result["deadlineText"] = "2026年11月27日18:00"
         post.return_value = self.response(result)
-        self.assertIsNone(self.send("截止2026年11月27日18:00").json["data"]["deadline"])
+        self.assertEqual(self.send("截止2026年11月27日18:00").json["data"]["deadline"], result["deadline"])
+
+    @patch("backend.app.requests.post")
+    def test_campus_deadline_policy_and_null_recovery(self, post):
+        description = "2026年11月28日20:00前"
+        post.return_value = self.response({**self.result, "deadlineText": description, "deadline": None})
+        reply = self.send(f"请在{description}提交报告")
+        self.assertEqual(reply.status_code, 200)
+        self.assertEqual(reply.json["data"]["deadline"], "2026-11-28T20:00:00+08:00")
+        self.assertEqual(reply.json["data"]["deadlineText"], description)
+        for text in ("本周五前", "11月28日20:00前", "2026年11月28日前", "2026年2月30日20:00前",
+                     "2026年11月28日20:00或2026年11月29日20:00前", "纽约时间2026年11月28日20:00前",
+                     "2026年11月28日20:00（UTC+09:00）前"):
+            with self.subTest(text=text):
+                post.return_value = self.response({**self.result, "deadlineText": text, "deadline": None})
+                self.assertIsNone(self.send(f"请在{text}提交报告").json["data"]["deadline"])
+        post.return_value = self.response({**self.result, "deadlineText": "2026年11月28日20:00", "deadline": None})
+        self.assertIsNone(self.send("活动开始于2026年11月28日20:00").json["data"]["deadline"])
 
     @patch("backend.app.requests.post")
     def test_cors(self, post):

@@ -5,8 +5,8 @@ let activeCategory = 'all';
 let visibleCount = 5;
 let loadError = null;
 let aiBusy = false;
-let pendingSaveId = null;
 let pendingSaveData = null;
+let pendingNotification = null;
 
 const list = document.getElementById('notificationList');
 const tabs = document.querySelectorAll('.tab');
@@ -195,7 +195,7 @@ markAllButton.addEventListener('click', async () => {
     for (const item of unreadNotifications) {
       await updateNotification(item.id, { isRead: true });
     }
-    loadNotifications();
+    // 每次成功写入已由同步订阅更新，不再次全量渲染。
   } catch (error) {
     loadNotifications();
     showError(error);
@@ -212,7 +212,7 @@ list.addEventListener('click', async event => {
 
   try {
     await updateNotification(action.dataset.id, { isRead: true });
-    loadNotifications();
+    // subscribe(loadNotifications) 在保存成功后立即执行。
   } catch (error) {
     showError(error);
   }
@@ -233,7 +233,7 @@ toggleMessageForm.addEventListener('click', () => {
 
 messageForm.addEventListener('submit', async event => {
   event.preventDefault();
-  if (aiBusy) return;
+  if (aiBusy || pendingSaveData) return;
 
   const sender = senderInput.value.trim();
   const source = sourceInput.value.trim();
@@ -283,9 +283,10 @@ function showFormStatus(message, kind = '') {
 
 function setAiBusy(busy) {
   aiBusy = busy;
-  aiRecognizeButton.disabled = busy;
-  submitMessage.disabled = busy;
+  aiRecognizeButton.disabled = busy || !!pendingSaveData;
+  submitMessage.disabled = busy || !!pendingSaveData;
   aiRetrySave.disabled = busy;
+  for (const input of [senderInput, sourceInput, contentInput, typeInput, aiTokenInput]) input.disabled = busy || !!pendingSaveData;
   aiRecognizeButton.textContent = busy ? '识别中…' : 'AI 识别';
 }
 
@@ -326,39 +327,58 @@ function clearFormKeepToken() {
 }
 
 async function requestAiExtraction(token, content) {
-  let response;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 65_000);
   try {
-    response = await fetch(AI_ENDPOINT, {
+    const response = await fetch(AI_ENDPOINT, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
       },
       body: JSON.stringify({ content }),
+      signal: controller.signal,
     });
-  } catch {
-    throw new Error('识别失败：无法连接 AI 服务，请检查网络后重试。');
+    let payload;
+    try { payload = await response.json(); } catch (error) {
+      if (controller.signal.aborted) throw error;
+      throw new Error(`识别失败：AI 服务返回非 JSON 响应（HTTP ${response.status}）。`);
+    }
+    if (!response.ok) {
+      const messages = { 401: '队员令牌无效，请检查令牌。', 403: '当前页面来源未获允许，请联系管理员。',
+        429: '调用次数已达限制，请稍后重试。', 503: 'AI 服务暂不可用，请稍后重试或联系管理员。', 504: 'AI 服务响应超时，请稍后重试。' };
+      throw new Error(`识别失败（HTTP ${response.status}）：${messages[response.status] || 'AI 服务调用失败，请稍后重试。'}`);
+    }
+    if (payload?.success !== true || !payload.data || typeof payload.data !== 'object' || Array.isArray(payload.data)) {
+      throw new Error('识别失败：AI 服务未返回有效识别结果。');
+    }
+    return payload;
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('识别超时：等待已超过 65 秒，请稍后重试。');
+    if (error instanceof TypeError) throw new Error('识别失败：无法连接 AI 服务，请检查网络或来源授权后重试。');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  let payload = null;
-  try { payload = await response.json(); } catch { /* 非 JSON 响应 */ }
-  if (!payload) throw new Error('识别失败：AI 服务返回异常，请稍后重试。');
-  return payload;
 }
 
-function setPendingSave(id, data) {
-  pendingSaveId = id;
+function setPendingSave(data) {
   pendingSaveData = data;
-  aiRetrySave.hidden = !id;
+  aiRetrySave.hidden = !data;
 }
 
 function clearPendingSave() {
-  pendingSaveId = null;
   pendingSaveData = null;
+  pendingNotification = null;
   aiRetrySave.hidden = true;
 }
 
 async function recognizeWithAI() {
   if (aiBusy) return;
+  if (pendingSaveData) {
+    showFormStatus('尚有未保存的识别草稿，请先重试保存。草稿仅在当前页面，刷新或离开会丢失。', 'error');
+    return;
+  }
   const sender = senderInput.value.trim();
   const source = sourceInput.value.trim();
   const content = contentInput.value.trim();
@@ -373,89 +393,73 @@ async function recognizeWithAI() {
   }
 
   setAiBusy(true);
-  showFormStatus('AI 识别中…');
-
-  // 阶段一：AI 请求（网络异常 / 后端非成功 / 响应异常）。
-  let payload;
   try {
-    payload = await requestAiExtraction(token, content);
-  } catch (error) {
-    showFormStatus(error?.message || '识别失败：无法连接 AI 服务，请稍后重试。', 'error');
-    setAiBusy(false);
-    return;
-  }
-  if (payload.success !== true) {
-    const message = payload?.error?.message || 'AI 服务返回异常，请稍后重试';
-    showFormStatus(`识别失败：${message}`, 'error');
-    setAiBusy(false);
-    return;
-  }
+    showFormStatus('AI 识别中…');
 
-  // 阶段二：创建通知（取得 id）。
-  let created;
-  try {
-    created = await addNotification({
-      sender,
-      source,
-      content,
-      type: payload.data.type,
-      isImportant: false,
-      isRead: false,
-    });
-  } catch (error) {
-    showFormStatus(`通知创建失败：${error?.message || '未知错误'}`, 'error');
-    setAiBusy(false);
-    return;
-  }
+    // 阶段一：AI 请求（网络异常 / 后端非成功 / 响应异常）。
+    let payload;
+    try {
+      payload = await requestAiExtraction(token, content);
+    } catch (error) {
+      showFormStatus(error?.message || '识别失败：无法连接 AI 服务，请稍后重试。', 'error');
+      return;
+    }
 
-  // 阶段三：一次 updateNotification 保存 type + 完整 extraction + pending。
-  try {
-    await updateNotification(created.id, {
-      type: payload.data.type,
-      extraction: payload.data,
-      extractionStatus: 'pending',
-    });
-  } catch (error) {
-    // 消息已创建，仅识别结果未保存：保留 id 与识别结果，供「重试保存」。
-    setPendingSave(created.id, payload.data);
+    // 公共接口已支持完整草稿：一次写入通知和 extraction，避免半成功记录。
+    // 用户主动识别并查看结果；普通新增仍默认未读。
+    pendingNotification = { sender, source, content, type: payload.data.type, isImportant: false, isRead: true };
+    setPendingSave(payload.data);
+    try {
+      await addNotification({
+        ...pendingNotification,
+        extraction: payload.data,
+        extractionStatus: 'pending',
+      });
+    } catch (error) {
+      if (error?.code === 'VALIDATION') {
+        clearPendingSave();
+        showFormStatus('识别结果字段不合法，未保存通知。请重新识别或手工填写。', 'error');
+        return;
+      }
+      showAiPreview(payload.data);
+      showFormStatus(`通知和识别结果未保存：${error?.message || '存储不可用'}。草稿仅保留在当前页面，请恢复存储后重试；刷新或离开会丢失。`, 'error');
+      activeCategory = 'all';
+      tabs.forEach(tab => tab.classList.toggle('active', tab.dataset.category === 'all'));
+      loadNotifications();
+      return;
+    }
+
+    clearPendingSave();
     showAiPreview(payload.data);
     clearFormKeepToken();
-    showFormStatus('消息已创建，但 AI 识别结果未保存，请重试。', 'error');
+    showFormStatus('识别已保存为待确认，请在近期待办页人工确认并生成任务', 'success');
     activeCategory = 'all';
     tabs.forEach(tab => tab.classList.toggle('active', tab.dataset.category === 'all'));
     loadNotifications();
+  } finally {
     setAiBusy(false);
-    return;
   }
-
-  clearPendingSave();
-  showAiPreview(payload.data);
-  clearFormKeepToken();
-  showFormStatus('识别已保存为待确认，请在近期待办页人工确认并生成任务', 'success');
-  activeCategory = 'all';
-  tabs.forEach(tab => tab.classList.toggle('active', tab.dataset.category === 'all'));
-  loadNotifications();
-  setAiBusy(false);
 }
 
 async function retrySaveExtraction() {
   if (aiBusy) return;
-  if (!pendingSaveId || !pendingSaveData) return;
+  if (!pendingSaveData) return;
 
   setAiBusy(true);
   showFormStatus('正在重试保存识别结果…');
   try {
-    // 重试必须沿用原来的 notificationId，不再次 addNotification。
-    await updateNotification(pendingSaveId, {
+    const changes = {
       type: pendingSaveData.type,
       extraction: pendingSaveData,
       extractionStatus: 'pending',
-    });
+    };
+    await addNotification({ ...pendingNotification, ...changes });
     clearPendingSave();
+    clearFormKeepToken();
     showFormStatus('识别结果已保存为待确认', 'success');
     loadNotifications();
   } catch (error) {
-    showFormStatus(`重试保存失败：${error?.message || '未知错误'}，请重试。`, 'error');
+    showFormStatus(`重试保存失败：${error?.message || '存储不可用'}。草稿仍仅在当前页面，刷新或离开会丢失。`, 'error');
   } finally {
     setAiBusy(false);
   }
@@ -464,6 +468,12 @@ async function retrySaveExtraction() {
 aiRecognizeButton.addEventListener('click', () => void recognizeWithAI());
 aiRetrySave.addEventListener('click', () => void retrySaveExtraction());
 aiResultClose.addEventListener('click', resetAiPreview);
+window.addEventListener('beforeunload', event => {
+  if (pendingSaveData || aiBusy) {
+    event.preventDefault();
+    event.returnValue = '';
+  }
+});
 
 subscribe(loadNotifications);
 loadNotifications();

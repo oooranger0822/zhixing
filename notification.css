@@ -248,7 +248,7 @@ h1 { margin: 0; font-size: 24px; line-height: 1.2; letter-spacing: 1px; }
 }
 
 .message-form[hidden] { display: none; }
-.form-field { display: grid; gap: 7px; }
+.form-field { display: grid; gap: 7px; min-width: 0; }
 .form-field label { color: #687892; font-size: 12px; }
 .form-field input,
 .form-field select {
@@ -290,6 +290,7 @@ h1 { margin: 0; font-size: 24px; line-height: 1.2; letter-spacing: 1px; }
 .form-actions {
   grid-column: 1 / -1;
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 10px;
 }
@@ -373,6 +374,11 @@ h1 { margin: 0; font-size: 24px; line-height: 1.2; letter-spacing: 1px; }
   color: var(--ink);
   font-size: 13px;
   word-break: break-word;
+}
+
+/* 在侧栏仍占宽度时先降为两列，防止表单最小宽度超出面板。 */
+@media (max-width: 1024px) {
+  .message-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 680px) {

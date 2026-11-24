@@ -56,7 +56,7 @@ try {
 若识别请求返回前 C 已完成确认，B 的上述 pending 写入会被拒绝，原确认状态及草稿保持不变。
 
 C：通过现有 `getNotifications()`（或 `getNotificationById(id)`）读取草稿，填入可编辑表单。
-当前 task.js 已有人工确认后生成任务的流程，但尚未使用 extraction 预填表单；此项由 C 接入，本次不修改页面代码。
+当前 task.js 已接入 pending extraction 的表单预填，用户仍需核对并确认后才生成任务。
 
 ```js
 import { getNotifications, createTaskFromNotification } from './js/data.js';
@@ -104,6 +104,14 @@ try {
 更新不允许修改任何记录的 id、通知原始 content、任务 sourceNotificationId / createdAt / completedAt；未知字段也会报错。通知的摘要和分类可以编辑。任务完成时间由状态变化维护；重复完成保留原时间，取消完成恢复 null。已 confirmed 的通知不可退回其他提取状态。
 
 ## 首页口径
+
+已读规则：普通新增通知默认未读。主动展开首页原文、在任务弹窗选择并查看通知/AI 草稿，使用 `updateNotification(id, { isRead: true })` 标为已读。
+通知页主动 AI 识别并展示结果的保存记录为已读、`pending`；成功生成任务时，公共数据层在同一次通知写入中保存 `confirmed` 和 `isRead: true`，失败按原规则回滚。
+`isRead`、`extractionStatus`、任务 `status` 是独立字段：已读不自动确认或完成，完成/撤销任务不改变已读，已确认通知也仍可通过接口修改已读状态。首页订阅重读更新未读数量。
+任务弹窗只有一个尚未 confirmed 的候选时自动选择并预填；多个候选由用户选择，不自动生成任务。
+
+AI 日期规则：完整中文年月日及明确时刻在未标注时区时采用校园默认北京时间（UTC+08:00），例如 `2026年11月28日20:00前` 对应 `2026-11-28T20:00:00+08:00`。
+缺少年份/时刻、相对时间、多个冲突时间不推算；明确其他时区不得套用北京时间。前端日期表单和展示转换为浏览器本地时间，保存为带时区 ISO，`deadlineText` 保留原文含义。
 
 - `getDashboardStats()`：通知总数 notificationCount、未读通知数 unreadCount、pending 任务数 pendingTaskCount、**未读且重要的通知数** importantCount。重要任务不另行累加，避免重复统计。
 - `getTodayHighlights()`：返回浏览器本地日历日期为今天的**全部通知，不只是重要通知**，包含普通通知以及已读通知；重要优先，同等重要程度下按 time 倒序。返回通知数组。
