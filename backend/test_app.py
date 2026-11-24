@@ -129,12 +129,12 @@ $results | ConvertTo-Json -Compress
 
     @patch("backend.app.requests.post")
     def test_bad_inputs_do_not_call_model(self, post):
-        for content in ("", "  \n", None, 4, [], "字" * 5001):
+        for content in ("", "  \n", None, 4, [], "字" * 10001):
             reply = self.client.post("/api/extract", json={"content": content})
             self.assertEqual(reply.status_code, 400)
         self.assertEqual(self.client.post("/api/extract", data="oops").status_code, 415)
         self.assertEqual(self.client.post("/api/extract", data="{", content_type="application/json").status_code, 400)
-        self.assertEqual(self.client.post("/api/extract", data="x" * 65537, content_type="application/json").status_code, 413)
+        self.assertEqual(self.client.post("/api/extract", data="x" * 131073, content_type="application/json").status_code, 413)
         post.assert_not_called()
 
     @patch("backend.app.requests.post")

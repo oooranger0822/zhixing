@@ -1,9 +1,9 @@
-import { getDashboardStats, getTodayHighlights, getNotifications, getRecentTasks, subscribe, updateNotification } from './data.js';
+import { getDashboardStats, getTodayHighlights, getNotifications, getRecentTasks, subscribe, updateNotification, isTaskOverdue } from './data.js';
 
 const byId = id => document.getElementById(id);
 const typeLabels = { course: '课程', assignment: '作业', exam: '考试', activity: '活动', class: '班级', other: '通知' };
 const numberFormat = new Intl.NumberFormat('zh-CN');
-const dateFormat = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+const dateFormat = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
 let unsubscribe = null;
 let timer = null;
 const notificationViews = new WeakMap();
@@ -137,11 +137,15 @@ function taskCard(item, index) {
   if (item.course) body.append(node('p', 'task-course', item.course));
   let deadlineText = item.deadlineText ? `截止待确认 · ${item.deadlineText}` : '截止时间待确认';
   let deadlineClass = '';
-  if (item.deadline !== null) {
+  if (item.deadlineDate) {
+    deadlineText = `${isTaskOverdue(item) ? '已逾期 · ' : '截止 · '}${item.deadlineDate}（未指定时刻）`;
+    deadlineClass = isTaskOverdue(item) ? ' overdue' : '';
+  } else if (item.deadline !== null) {
     const deadline = new Date(item.deadline);
     const now = new Date();
     const overdue = deadline.getTime() < now.getTime();
-    const today = deadline.toDateString() === now.toDateString();
+    const beijingDay = date => new Date(date.getTime() + 8 * 3600000).toISOString().slice(0, 10);
+    const today = beijingDay(deadline) === beijingDay(now);
     deadlineText = `${overdue ? '已逾期 · ' : today ? '今日截止 · ' : '截止 · '}${dateFormat.format(deadline)}`;
     deadlineClass = overdue ? ' overdue' : today ? ' due-today' : '';
   }

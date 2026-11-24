@@ -1089,3 +1089,10 @@ h2 {
     transition:none!important
   }
 }
+
+@media (max-width: 768px) {
+  .stat-card, .welcome, .notice-card, .task-card { min-width: 0; }
+  .stat-card, .welcome { overflow-wrap: anywhere; }
+  .mobile-navigation { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  main { padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
+}

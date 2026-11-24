@@ -17,6 +17,38 @@ const toggleMessageForm = document.getElementById('toggleMessageForm');
 const messageForm = document.getElementById('messageForm');
 const senderInput = document.getElementById('senderInput');
 const contentInput = document.getElementById('contentInput');
+const contentCount = document.getElementById('contentCount');
+const referenceDateInput = document.getElementById('referenceDateInput');
+let entryTime = new Date().toISOString();
+let entryStarted = false;
+let referenceEdited = false;
+function resetReferenceDate() {
+  entryTime = new Date().toISOString();
+  entryStarted = false;
+  referenceEdited = false;
+  referenceDateInput.value = new Date(Date.parse(entryTime) + 8 * 3600000).toISOString().slice(0, 10);
+  updateContentCount();
+}
+function updateContentCount() {
+  const count = [...contentInput.value].length;
+  contentCount.textContent = `${count} / 10000 字符${count > 10000 ? ' · 已超出限制，请缩短内容' : ''}`;
+}
+function validContentLength() {
+  updateContentCount();
+  if ([...contentInput.value].length <= 10000) return true;
+  showFormStatus('通知内容不能超过 10000 个字符，请缩短后重试。', 'error');
+  return false;
+}
+referenceDateInput.addEventListener('input', () => { referenceEdited = true; });
+contentInput.addEventListener('input', () => {
+  if (!entryStarted && contentInput.value) {
+    entryTime = new Date().toISOString();
+    entryStarted = true;
+    if (!referenceEdited) referenceDateInput.value = new Date(Date.parse(entryTime) + 8 * 3600000).toISOString().slice(0, 10);
+  }
+  updateContentCount();
+});
+resetReferenceDate();
 const sourceInput = document.getElementById('sourceInput');
 const typeInput = document.getElementById('typeInput');
 const submitMessage = document.getElementById('submitMessage');
@@ -234,6 +266,7 @@ toggleMessageForm.addEventListener('click', () => {
 messageForm.addEventListener('submit', async event => {
   event.preventDefault();
   if (aiBusy || pendingSaveData) return;
+  if (!validContentLength()) return;
 
   const sender = senderInput.value.trim();
   const source = sourceInput.value.trim();
@@ -253,6 +286,7 @@ messageForm.addEventListener('submit', async event => {
       sender,
       source,
       content,
+      time: entryTime,
       type: typeInput.value,
       isImportant: false,
       isRead: false
@@ -286,7 +320,7 @@ function setAiBusy(busy) {
   aiRecognizeButton.disabled = busy || !!pendingSaveData;
   submitMessage.disabled = busy || !!pendingSaveData;
   aiRetrySave.disabled = busy;
-  for (const input of [senderInput, sourceInput, contentInput, typeInput, aiTokenInput]) input.disabled = busy || !!pendingSaveData;
+  for (const input of [senderInput, sourceInput, contentInput, typeInput, aiTokenInput, referenceDateInput]) input.disabled = busy || !!pendingSaveData;
   aiRecognizeButton.textContent = busy ? '识别中…' : 'AI 识别';
 }
 
@@ -294,8 +328,7 @@ function formatPreviewDeadline(iso) {
   if (!iso) return '—';
   const date = new Date(iso);
   if (!Number.isFinite(date.getTime())) return iso;
-  const pad = number => String(number).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return `${new Date(date.getTime() + 8 * 3600000).toISOString().slice(0, 16).replace('T', ' ')}（北京）`;
 }
 
 function resetAiPreview() {
@@ -314,7 +347,7 @@ function showAiPreview(data) {
   aiPreviewCourse.textContent = data.course || '—';
   aiPreviewTitle.textContent = data.title || '—';
   aiPreviewContent.textContent = data.content || '—';
-  aiPreviewDeadline.textContent = formatPreviewDeadline(data.deadline);
+  aiPreviewDeadline.textContent = `${data.deadlineDate || formatPreviewDeadline(data.deadline)}${data.dateWarning ? ` · ${data.dateWarning}` : ''}`;
   aiPreviewDeadlineText.textContent = data.deadlineText || '—';
   aiPreviewConfidence.textContent = typeof data.confidence === 'number' ? `${Math.round(data.confidence * 100)}%` : '—';
   aiResult.hidden = false;
@@ -323,6 +356,7 @@ function showAiPreview(data) {
 function clearFormKeepToken() {
   const token = aiTokenInput.value;
   messageForm.reset();
+  resetReferenceDate();
   aiTokenInput.value = token;
 }
 
@@ -336,7 +370,7 @@ async function requestAiExtraction(token, content) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
       },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, referenceTime: `${referenceDateInput.value}T${new Date(Date.parse(entryTime) + 8 * 3600000).toISOString().slice(11, 19)}+08:00` }),
       signal: controller.signal,
     });
     let payload;
@@ -345,6 +379,20 @@ async function requestAiExtraction(token, content) {
       throw new Error(`识别失败：AI 服务返回非 JSON 响应（HTTP ${response.status}）。`);
     }
     if (!response.ok) {
+      // Exact fingerprint of our deployed content-only backend; never infer version
+      // mismatch from HTTP 400 alone or retry by silently dropping referenceTime.
+      if (response.status === 400 && payload?.success === false &&
+          payload.error?.code === 'INVALID_CONTENT' &&
+          payload.error?.message === '请提供非空的 content 字符串，且不要包含额外字段。') {
+        throw new Error('AI 服务版本尚未更新，请联系管理员');
+      }
+      if (response.status === 400) {
+        const errors = {
+          INVALID_REFERENCE_TIME: '参考日期无效，请检查并修改参考日期。',
+          CONTENT_TOO_LONG: '通知内容超过服务允许的长度，请检查内容或联系管理员确认服务版本。',
+        };
+        throw new Error(`识别失败（HTTP 400）：${errors[payload?.error?.code] || '请求未被服务接受，请检查填写内容；如仍失败，请联系管理员。'}`);
+      }
       const messages = { 401: '队员令牌无效，请检查令牌。', 403: '当前页面来源未获允许，请联系管理员。',
         429: '调用次数已达限制，请稍后重试。', 503: 'AI 服务暂不可用，请稍后重试或联系管理员。', 504: 'AI 服务响应超时，请稍后重试。' };
       throw new Error(`识别失败（HTTP ${response.status}）：${messages[response.status] || 'AI 服务调用失败，请稍后重试。'}`);
@@ -392,6 +440,11 @@ async function recognizeWithAI() {
     return;
   }
 
+  if (!validContentLength()) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(referenceDateInput.value)) {
+    showFormStatus('请填写有效的时间参考日期。', 'error');
+    return;
+  }
   setAiBusy(true);
   try {
     showFormStatus('AI 识别中…');
@@ -407,7 +460,7 @@ async function recognizeWithAI() {
 
     // 公共接口已支持完整草稿：一次写入通知和 extraction，避免半成功记录。
     // 用户主动识别并查看结果；普通新增仍默认未读。
-    pendingNotification = { sender, source, content, type: payload.data.type, isImportant: false, isRead: true };
+    pendingNotification = { sender, source, content, time: entryTime, type: payload.data.type, isImportant: false, isRead: true };
     setPendingSave(payload.data);
     try {
       await addNotification({

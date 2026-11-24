@@ -70,8 +70,8 @@ export async function runTests(source) {
     assert(env.values.get(key) === legacy && a.getDashboardStats().notificationCount === 1, '读取不写回且首页正常');
     const invalid = [undefined, [], 'text', {}, { ...extraction, extra: true },
       { ...extraction, type: 'unknown' }, { ...extraction, course: null }, { ...extraction, title: 3 },
-      { ...extraction, content: '字'.repeat(5001) }, { ...extraction, course: '字'.repeat(201) },
-      { ...extraction, title: '字'.repeat(301) }, { ...extraction, deadlineText: '字'.repeat(5001) },
+      { ...extraction, content: '字'.repeat(10001) }, { ...extraction, course: '字'.repeat(201) },
+      { ...extraction, title: '字'.repeat(301) }, { ...extraction, deadlineText: '字'.repeat(10001) },
       ...[true, '0.9', NaN, Infinity, -0.1, 1.1].map(confidence => ({ ...extraction, confidence })),
       ...['明天', '2026-11-23T18:00:00', '2026-02-30T18:00:00+08:00'].map(deadline => ({ ...extraction, deadline }))];
     const events = []; a.subscribe(event => events.push(event));

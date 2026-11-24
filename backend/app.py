@@ -16,10 +16,12 @@ from werkzeug.exceptions import HTTPException
 
 if __package__:
     from .access import AccessError, authenticate, consume_quota
+    from .dates import reference_time, resolve_date
 else:
     from access import AccessError, authenticate, consume_quota
+    from dates import reference_time, resolve_date
 
-MAX_CONTENT_LENGTH = 5000
+MAX_CONTENT_LENGTH = 10000
 MAX_UPSTREAM_BYTES = 131072
 FIELDS = {"type", "course", "title", "content", "deadline", "deadlineText", "confidence"}
 TYPES = {"course", "assignment", "exam", "activity", "class", "other"}
@@ -41,6 +43,8 @@ deadlineText 必须是原文中连续出现的时间描述，没有则为空字�
 deadline 仅在原文提供完整年份、日期、时刻且确为截止时间时，
 返回带时区、含秒的 ISO 8601 字符串，否则必须为 null。
 本周五、明天、月底等相对时间没有可靠参照，一律不得使用当前系统时间推算。
+完整保留原文中的相对日期和中文时刻到 deadlineText；服务端会用用户提供的参考日期单独解析。
+“24号晚上8点前”“28号之前”“3号交作业”等省略年月的日期，也必须原样提取时间片段到 deadlineText，不补写年月；deadline 返回 null，由服务端生成待人工确认的建议日期。
 只有日期没有时刻时，不能假定 23:59。校园通知的完整中文年月日和时刻未注明时区时，按北京时间 UTC+08:00 解释。
 例如“2026年11月28日20:00前”返回“2026-11-28T20:00:00+08:00”。
 明确的其他时区不得套用北京时间，无法可靠确定偏移则返回 null。多个冲突截止时间不得任选一个。
@@ -98,7 +102,7 @@ def validate_result(data, source):
         raise ValueError("Invalid fields")
     if not isinstance(data["type"], str) or data["type"] not in TYPES:
         raise ValueError("Invalid type")
-    for field, limit in {"course": 200, "title": 300, "content": 5000, "deadlineText": 5000}.items():
+    for field, limit in {"course": 200, "title": 300, "content": 10000, "deadlineText": 10000}.items():
         if not isinstance(data[field], str) or len(data[field]) > limit:
             raise ValueError("Invalid text field")
     confidence = data["confidence"]
@@ -206,7 +210,7 @@ def create_app(test_config=None):
     app = Flask(__name__)
     app.json.ensure_ascii = False
     app.config.update(
-        MAX_CONTENT_LENGTH=65536,
+        MAX_CONTENT_LENGTH=131072,
         VERCEL=os.getenv("VERCEL", ""),
         AI_ACCESS_TOKENS=os.getenv("AI_ACCESS_TOKENS", ""),
         UPSTASH_REDIS_REST_URL=os.getenv("UPSTASH_REDIS_REST_URL", ""),
@@ -265,12 +269,20 @@ def create_app(test_config=None):
         if not request.is_json:
             raise ExtractionError("INVALID_CONTENT_TYPE", "请使用 application/json 请求。", 415)
         data = request.get_json()
-        if not isinstance(data, dict) or set(data) != {"content"} or not isinstance(data["content"], str) or not data["content"].strip():
-            raise ExtractionError("INVALID_CONTENT", "请提供非空的 content 字符串，且不要包含额外字段。", 400)
+        if not isinstance(data, dict) or not {'content'} <= set(data) <= {'content', 'referenceTime'} or not isinstance(data['content'], str) or not data['content'].strip():
+            raise ExtractionError("INVALID_CONTENT", "请提供非空的 content 字符串；仅允许附加 referenceTime 字段。", 400)
         if len(data["content"]) > MAX_CONTENT_LENGTH:
-            raise ExtractionError("CONTENT_TOO_LONG", "通知内容不能超过 5000 个字符。", 400)
+            raise ExtractionError("CONTENT_TOO_LONG", "通知内容不能超过 10000 个字符。", 400)
+        reference = None
+        if 'referenceTime' in data:
+            try:
+                reference = reference_time(data['referenceTime'])
+            except (ValueError, TypeError, OverflowError):
+                raise ExtractionError('INVALID_REFERENCE_TIME', '参考日期无效，请提供带时区的 ISO 时间。', 400) from None
         consume_quota(member, app.config)
         result = call_deepseek(data["content"].strip(), app.config)
+        if reference is not None:
+            result = resolve_date(result, reference, data['content'])
         return jsonify(success=True, data=result)
 
     return app
