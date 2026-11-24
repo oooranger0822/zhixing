@@ -5,6 +5,9 @@ import {
   updateTask,
   updateNotification,
   createTaskFromNotification,
+  createManualTask,
+  comparePendingTasks,
+  isTaskOverdue,
   subscribe,
   DataError,
 } from './js/data.js';
@@ -35,8 +38,16 @@ const taskCourseInput = document.getElementById('taskCourseInput');
 const taskContentInput = document.getElementById('taskContentInput');
 const taskDeadlineInput = document.getElementById('taskDeadlineInput');
 const taskDeadlineTextInput = document.getElementById('taskDeadlineTextInput');
+const taskTimeInput = document.getElementById('taskTimeInput');
+const taskDateHint = document.getElementById('taskDateHint');
+function showDateHint(message = '') {
+  taskDateHint.textContent = message;
+  taskDateHint.hidden = !message;
+}
+const taskTypeInput = document.getElementById('taskTypeInput');
 
 const extractState = {
+  mode: 'notification',
   notifications: [],
   selectedId: null,
   submitting: false,
@@ -63,17 +74,13 @@ function escapeHtml(value) {
 }
 
 function formatDateTime(value) {
-  const d = new Date(value);
-  if (!Number.isFinite(d.getTime())) return escapeHtml(value);
-  const pad = n => String(n).padStart(2, '0');
-  const md = `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  const now = new Date();
-  return d.getFullYear() === now.getFullYear() ? `${md} ${hm}` : `${d.getFullYear()}-${md} ${hm}`;
+  const dateTime = toLocalInputValue(value);
+  return dateTime ? `${dateTime.replace('T', ' ')}（北京）` : escapeHtml(value);
 }
 
 // 截止时间文案与提醒状态（none / due / overdue）
 function deadlineInfo(task) {
+  if (task.deadlineDate) return { text: `${isTaskOverdue(task) ? '已逾期 · ' : '截止：'}${task.deadlineDate}（未指定时刻）`, state: isTaskOverdue(task) ? 'overdue' : 'none' };
   if (!task.deadline) {
     return {
       text: task.deadlineText ? `截止：${task.deadlineText}` : '截止时间待定',
@@ -108,9 +115,7 @@ function sortTasks(list) {
     const aDone = a.status === 'completed' ? 1 : 0;
     const bDone = b.status === 'completed' ? 1 : 0;
     if (aDone !== bDone) return aDone - bDone;
-    const aD = a.deadline ? Date.parse(a.deadline) : Infinity;
-    const bD = b.deadline ? Date.parse(b.deadline) : Infinity;
-    return (aD - bD) || (Date.parse(b.createdAt) - Date.parse(a.createdAt));
+    return aDone ? Date.parse(b.createdAt) - Date.parse(a.createdAt) : comparePendingTasks(a, b);
   });
 }
 
@@ -201,7 +206,7 @@ function renderDetail() {
     : null;
   const sourceLine = source
     ? `<div class="source-link">来源于通知：${escapeHtml(source.sender)} — ${escapeHtml(source.summary || source.content)}</div>`
-    : '';
+    : `<div class="source-link">${task.sourceNotificationId ? '来源于通知（原通知不可用）' : '手动创建'}</div>`;
 
   detailEl.innerHTML = `
     <div class="detail-header">
@@ -406,7 +411,7 @@ function renderNotificationPicker() {
 }
 
 function refreshExtractSubmit() {
-  extractSubmitEl.disabled = extractState.submitting || !extractState.selectedId;
+  extractSubmitEl.disabled = extractState.submitting || (extractState.mode !== 'manual' && !extractState.selectedId);
   extractSubmitEl.textContent = extractState.submitting ? '生成中…' : '生成任务';
 }
 
@@ -422,12 +427,17 @@ function hideExtractError() {
 
 function resetExtractForm() {
   extractFormEl.reset();
+  showDateHint();
   extractState.selectedId = null;
   hideExtractError();
   refreshExtractSubmit();
 }
 
 function openExtractModal() {
+  extractState.mode = 'notification';
+  document.getElementById('notificationPicker').hidden = false;
+  document.getElementById('extractTitle').textContent = '从通知生成任务';
+  document.getElementById('extractEyebrow').textContent = 'FROM NOTIFICATION';
   extractState.submitting = false;
   resetExtractForm();
   let rows;
@@ -459,11 +469,14 @@ function selectNotification(id) {
   if (!notification) return;
   extractState.selectedId = id;
   if (!applyNotificationDraft(notification)) {
+    showDateHint();
     // 无 AI 草稿或非 pending：保留原来的手动预填逻辑。
     taskTitleInput.value = suggestedTitle(notification);
     taskContentInput.value = notification.content || '';
     taskCourseInput.value = '';
     taskDeadlineInput.value = '';
+    taskTimeInput.value = '';
+    taskTypeInput.value = notification.type || 'other';
     taskDeadlineTextInput.value = '';
   }
   hideExtractError();
@@ -478,11 +491,14 @@ function selectNotification(id) {
 
 function buildDeadline() {
   const raw = taskDeadlineInput.value;
-  const text = taskDeadlineTextInput.value.trim();
-  if (!validDateParts(raw)) return { deadline: null, deadlineText: text };
-  const d = new Date(raw);
-  if (!Number.isFinite(d.getTime())) return { deadline: null, deadlineText: text };
-  return { deadline: d.toISOString(), deadlineText: text };
+  const text = taskDeadlineTextInput.value;
+  if (!raw) return { deadline: null, deadlineDate: null, deadlineText: text };
+  if (!validDateParts(`${raw}T00:00`)) return { deadline: null, deadlineDate: null, deadlineText: text };
+  if (!taskTimeInput.value) return { deadline: null, deadlineDate: raw, deadlineText: text };
+  const time = taskTimeInput.value.length === 5 ? `${taskTimeInput.value}:00` : taskTimeInput.value;
+  const value = `${raw}T${time}+08:00`;
+  if (!validDateParts(value)) return { deadline: null, deadlineDate: null, deadlineText: text };
+  return { deadline: new Date(value).toISOString(), deadlineDate: null, deadlineText: text };
 }
 
 function validDateParts(value) {
@@ -495,21 +511,24 @@ function validDateParts(value) {
   return y > 0 && m >= 1 && m <= 12 && d >= 1 && d <= days[m - 1] && h < 24 && minute < 60 && second < 60;
 }
 
-// ISO 时间字符串 → datetime-local 输入框所需格式（YYYY-MM-DDTHH:mm，浏览器本地时间）。
+// ISO 时间 → 北京时间；不依赖设备所在时区，分别预填日期和可选时刻。
 function toLocalInputValue(iso) {
   if (!validDateParts(iso) || !/(?:Z|[+-]\d{2}:\d{2})$/.test(iso)) return '';
   const d = new Date(iso);
   if (!Number.isFinite(d.getTime())) return '';
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return new Date(d.getTime() + 8 * 3600000).toISOString().slice(0, 19);
 }
 
-// 把 AI 识别结果映射到任务表单；只取五个任务业务字段，忽略 type / confidence。
+// 只将任务业务字段映射到确认表单，保留原文时间描述。
 function fillExtractionFields(extraction) {
+  showDateHint(extraction.dateWarning || '');
   taskTitleInput.value = extraction.title ? String(extraction.title).trim() : '';
   taskCourseInput.value = extraction.course ? String(extraction.course) : '';
   taskContentInput.value = extraction.content ? String(extraction.content) : '';
-  taskDeadlineInput.value = toLocalInputValue(extraction.deadline);
+  const dateTime = toLocalInputValue(extraction.deadline);
+  taskDeadlineInput.value = dateTime.slice(0, 10) || extraction.deadlineDate || '';
+  taskTimeInput.value = dateTime.slice(11, 19);
+  taskTypeInput.value = extraction.type || 'other';
   taskDeadlineTextInput.value = extraction.deadlineText ? String(extraction.deadlineText) : '';
 }
 
@@ -570,7 +589,7 @@ function refreshExtractNotifications() {
 async function submitExtract() {
   if (extractState.submitting) return;
   const sourceId = extractState.selectedId;
-  if (!sourceId) {
+  if (!sourceId && extractState.mode !== 'manual') {
     showExtractError('请先选择来源通知');
     return;
   }
@@ -579,19 +598,26 @@ async function submitExtract() {
     showExtractError('请填写任务标题');
     return;
   }
-  const { deadline, deadlineText } = buildDeadline();
+  const { deadline, deadlineDate, deadlineText } = buildDeadline();
+  if ((taskTimeInput.value && !deadline) || (taskDeadlineInput.value && !deadline && !deadlineDate)) {
+    showExtractError('请填写有效的截止日期和时刻，或清空时刻以仅保留日期。');
+    return;
+  }
 
   extractState.submitting = true;
   refreshExtractSubmit();
   hideExtractError();
   try {
-    const task = await createTaskFromNotification(sourceId, {
+    const taskData = {
       title,
+      type: taskTypeInput.value || 'other',
       course: taskCourseInput.value.trim(),
       content: taskContentInput.value.trim(),
       deadline,
+      deadlineDate,
       deadlineText,
-    });
+    };
+    const task = await (extractState.mode === 'manual' ? createManualTask(taskData) : createTaskFromNotification(sourceId, taskData));
     closeExtractModal();
     hideBanner();
     showBanner(`已生成任务「${task.title}」`, 'success');
@@ -607,6 +633,17 @@ async function submitExtract() {
 }
 
 extractEntryEl.addEventListener('click', openExtractModal);
+document.getElementById('manualEntry').addEventListener('click', () => {
+  extractState.mode = 'manual';
+  extractState.submitting = false;
+  resetExtractForm();
+  document.getElementById('notificationPicker').hidden = true;
+  document.getElementById('extractTitle').textContent = '新建任务';
+  document.getElementById('extractEyebrow').textContent = 'NEW TASK';
+  extractModalEl.hidden = false;
+  document.body.classList.add('modal-open');
+  taskTitleInput.focus();
+});
 extractCloseEl.addEventListener('click', closeExtractModal);
 extractCancelEl.addEventListener('click', closeExtractModal);
 extractSubmitEl.addEventListener('click', () => void submitExtract());

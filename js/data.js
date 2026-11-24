@@ -34,17 +34,26 @@ function date(value, field, nullable = false) {
 function enumValue(value, choices, field) {
   if (!choices.includes(value)) fail('VALIDATION', `${field} 值无效`);
 }
+function dateOnly(value, field) {
+  if (value === null) return;
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith('0000-') ||
+      !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value) fail('VALIDATION', `${field} 日期无效`);
+}
 function validateExtraction(value) {
   if (value === null) return;
   const required = ['type', 'course', 'title', 'content', 'deadline', 'deadlineText', 'confidence'];
-  fields(value, required);
+  fields(value, [...required, 'deadlineDate', 'dateWarning', 'referenceTime']);
   if (required.some(field => !Object.hasOwn(value, field))) fail('VALIDATION', 'extraction 必须包含完整识别字段');
   enumValue(value.type, TYPES, 'extraction.type');
-  for (const [field, limit] of Object.entries({ course: 200, title: 300, content: 5000, deadlineText: 5000 })) {
+  for (const [field, limit] of Object.entries({ course: 200, title: 300, content: 10000, deadlineText: 10000 })) {
     string(value[field], `extraction.${field}`);
-    if (value[field].length > limit) fail('VALIDATION', `extraction.${field} 超过长度限制`);
+    if ([...value[field]].length > limit) fail('VALIDATION', `extraction.${field} 超过长度限制`);
   }
   date(value.deadline, 'extraction.deadline', true);
+  if (Object.hasOwn(value, 'deadlineDate')) dateOnly(value.deadlineDate, 'extraction.deadlineDate');
+  if (value.deadline && value.deadlineDate) fail('VALIDATION', '截止时间与仅日期不能同时设置');
+  if (Object.hasOwn(value, 'dateWarning')) string(value.dateWarning, 'dateWarning');
+  if (Object.hasOwn(value, 'referenceTime')) date(value.referenceTime, 'referenceTime');
   if (value.deadline !== null) {
     // Date.parse 会将 2 月 30 日等日期归一化；识别结果不能接受这种无效日期。
     const [year, month, day] = value.deadline.slice(0, 10).split('-').map(Number);
@@ -75,6 +84,13 @@ function validate(kind, item) {
     for (const field of ['course', 'content', 'deadlineText']) string(item[field], field);
     enumValue(item.status, ['pending', 'completed'], 'status');
     date(item.deadline, 'deadline', true);
+    if (Object.hasOwn(item, 'deadlineDate')) dateOnly(item.deadlineDate, 'deadlineDate');
+    if (item.deadline && item.deadlineDate) fail('VALIDATION', '截止时间与仅日期不能同时设置');
+    if (Object.hasOwn(item, 'type')) enumValue(item.type, TYPES, 'type');
+    if (Object.hasOwn(item, 'sourceKind')) {
+      enumValue(item.sourceKind, ['manual', 'notification'], 'sourceKind');
+      if ((item.sourceKind === 'manual') !== (item.sourceNotificationId === null)) fail('VALIDATION', '任务来源不一致');
+    }
     date(item.createdAt, 'createdAt');
     date(item.completedAt, 'completedAt', true);
     if (item.sourceNotificationId !== null) string(item.sourceNotificationId, 'sourceNotificationId', true);
@@ -139,15 +155,22 @@ function notification(data) {
   fields(data, ['sender', 'source', 'content', 'type', 'summary', 'time', 'isImportant', 'isRead', 'extractionStatus', 'extraction']);
   const row = { id: id('notification'), type: 'other', summary: '', time: new Date().toISOString(), isImportant: false, isRead: false, extractionStatus: 'none', extraction: null, ...data };
   validate('notifications', row);
+  if ([...row.content].length > 10000) fail('VALIDATION', '通知内容不能超过 10000 个字符');
   if (row.extractionStatus === 'confirmed') fail('VALIDATION', 'confirmed 只能由任务生成流程设置');
   return row;
 }
 function task(data) {
-  fields(data, ['title', 'course', 'content', 'deadline', 'deadlineText', 'status', 'sourceNotificationId']);
-  const row = { id: id('task'), course: '', content: '', deadline: null, deadlineText: '', status: 'pending', sourceNotificationId: null, ...data, createdAt: new Date().toISOString(), completedAt: null };
+  fields(data, ['title', 'type', 'course', 'content', 'deadline', 'deadlineDate', 'deadlineText', 'status', 'sourceNotificationId']);
+  const row = { id: id('task'), type: 'other', course: '', content: '', deadline: null, deadlineDate: null, deadlineText: '', status: 'pending', sourceNotificationId: null, ...data, sourceKind: data.sourceNotificationId != null ? 'notification' : 'manual', createdAt: new Date().toISOString(), completedAt: null };
   if (row.status === 'completed') row.completedAt = new Date().toISOString();
   validate('tasks', row);
+  validateTaskDeadline(row.deadline);
   return row;
+}
+function validateTaskDeadline(value) {
+  if (value === null) return;
+  dateOnly(value.slice(0, 10), 'deadline');
+  if (Number(value.slice(11, 13)) > 23) fail('VALIDATION', 'deadline 时刻无效');
 }
 function find(rows, id) { return rows.find(row => row.id === id) ?? null; }
 function requireRow(rows, id) {
@@ -189,13 +212,19 @@ export function addTask(data) {
     return row;
   });
 }
+export function createManualTask(data) {
+  // Independent tasks cannot inject a source notification or bypass confirmation.
+  try { fields(data, ['title', 'type', 'course', 'content', 'deadline', 'deadlineDate', 'deadlineText']); }
+  catch (error) { return Promise.reject(error); }
+  return addTask(data);
+}
 function update(kind, id, changes) {
   return mutate(() => {
     const rows = read(kind);
     const original = requireRow(rows, id);
     const allowed = kind === 'notifications'
       ? ['sender', 'source', 'type', 'summary', 'time', 'isImportant', 'isRead', 'extractionStatus', 'extraction']
-      : ['title', 'course', 'content', 'deadline', 'deadlineText', 'status'];
+      : ['title', 'type', 'course', 'content', 'deadline', 'deadlineDate', 'deadlineText', 'status'];
     // ID、原始通知 content、任务来源及系统时间不可由页面改写。
     fields(changes, allowed);
     // confirmed 只能在关联任务成功保存的流程中设置，普通页面不可直接赋值。
@@ -210,6 +239,7 @@ function update(kind, id, changes) {
       row.completedAt = row.status === 'completed' ? (original.completedAt ?? new Date().toISOString()) : null;
     }
     validate(kind, row);
+    if (kind === 'tasks' && Object.hasOwn(changes, 'deadline')) validateTaskDeadline(row.deadline);
     write(kind, rows.map(item => item.id === id ? row : item));
     return row;
   });
@@ -233,7 +263,7 @@ export function createTaskFromNotification(id, taskData) {
     const source = requireRow(notifications, id);
     const tasks = getTasks();
     checkSource(tasks, id);
-    fields(taskData, ['title', 'course', 'content', 'deadline', 'deadlineText', 'status']);
+    fields(taskData, ['title', 'type', 'course', 'content', 'deadline', 'deadlineDate', 'deadlineText', 'status']);
     const row = task({ content: source.content, ...taskData, sourceNotificationId: id });
     const next = notifications.map(item => item.id === id ? { ...item, extractionStatus: 'confirmed', isRead: true } : item);
     const store = storage();
@@ -278,12 +308,21 @@ export function getTodayHighlights() {
     .sort((a, b) => Number(b.isImportant) - Number(a.isImportant) || Date.parse(b.time) - Date.parse(a.time));
 }
 export function getRecentTasks() {
-  // 最多五条待办：已知截止时间升序（含逾期），未知时间排末尾，同序按创建时间倒序。
-  return getTasks().filter(row => row.status === 'pending').sort((a, b) => {
-    const left = a.deadline === null ? Infinity : Date.parse(a.deadline);
-    const right = b.deadline === null ? Infinity : Date.parse(b.deadline);
-    return (left === right ? 0 : left - right) || Date.parse(b.createdAt) - Date.parse(a.createdAt);
-  }).slice(0, 5);
+  return getTasks().filter(row => row.status === 'pending').sort(comparePendingTasks).slice(0, 5);
+}
+export function isTaskOverdue(task, now = Date.now()) {
+  if (task.status === 'completed') return false;
+  if (task.deadline) return Date.parse(task.deadline) < now;
+  const today = new Date(now + 8 * 3600000).toISOString().slice(0, 10);
+  return !!task.deadlineDate && task.deadlineDate < today;
+}
+export function comparePendingTasks(a, b) {
+  const now = Date.now();
+  const overdue = Number(isTaskOverdue(b, now)) - Number(isTaskOverdue(a, now));
+  if (overdue) return overdue;
+  const stamp = task => task.deadline ? Date.parse(task.deadline) : task.deadlineDate ? Date.parse(`${task.deadlineDate}T00:00:00+08:00`) : Infinity;
+  const left = stamp(a), right = stamp(b);
+  return (left === right ? 0 : left - right) || Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.localeCompare(b.id);
 }
 export function subscribe(callback) {
   if (typeof callback !== 'function') fail('VALIDATION', '订阅者必须为函数');

@@ -7,12 +7,13 @@
 - `getNotifications()` / `getTasks()`：同步返回完整数组，新解析的对象可安全用于展示。
 - `getNotificationById(id)` / `getTaskById(id)`：同步返回对象，不存在返回 `null`。
 - `addNotification(data)` / `addTask(data)`：Promise，返回新增对象。
+- `createManualTask(data)`：Promise，创建独立手动任务，不接受来源 ID 或状态字段；只有 title 必填。
 - `updateNotification(id, changes)` / `updateTask(id, changes)`：Promise，返回更新对象；不存在抛出 `NOT_FOUND`。
 - `deleteNotification(id)` / `deleteTask(id)`：Promise，成功删除返回 `true`，记录不存在返回 `false`（不触发更新事件）。删除通知保留关联任务及其来源 ID。删除任务后，来源通知仍保持 `confirmed`，V1 暂不支持重新生成任务。
 - `createTaskFromNotification(id, taskData)`：Promise，返回新任务并将通知提取状态设为 `confirmed`。自动填入来源 ID，默认复制原文至任务内容；taskData 可覆盖任务内容，不会修改通知原文。已有任务或已 confirmed 的通知拒绝重复生成。来源不存在抛出 `NOT_FOUND`。
 - `subscribe(callback)`：返回退订函数。回调参数为 `{ source: 'local' | 'external', keys: string[] }`，接到事件后重新读取数据。一个回调失败不阻断其他回调。
 
-通知必填 `sender`、`source`、`content`（非空字符串）；可选 `type` 默认 `other`，`summary` 默认空串，`time` 默认当前时间，`isImportant` / `isRead` 默认 false，`extractionStatus` 默认 `none`。
+通知必填 `sender`、`source`、`content`（非空字符串）；新增 content 最多 10000 个 Unicode 码点，旧数据读取不截断、不写回。可选 `type` 默认 `other`，`summary` 默认空串，`time` 默认当前时间，`isImportant` / `isRead` 默认 false，`extractionStatus` 默认 `none`。
 
 可选 `extraction` 保存 AI 响应的完整 `data` 对象（不包含外层 `success`），新通知默认 `null`。
 `addNotification()` 和 `updateNotification()` 均支持该字段，不新增保存接口。
@@ -20,17 +21,20 @@
 
 ### AI 识别与人工确认（B / C 对接）
 
-`extraction` 为 `null` 或包含以下全部字段的对象，不接受额外字段、缺失字段或显式 `undefined`：
+`extraction` 为 `null` 或包含以下七个必填字段及三个可选日期字段的对象，不接受其他字段、缺失必填字段或显式 `undefined`：
 
 | 字段 | 校验 |
 | --- | --- |
 | type | `course / assignment / exam / activity / class / other` |
 | course | 字符串，最多 200 字符，不明确为空串 |
 | title | 字符串，最多 300 字符，可为空串，生成任务时必须人工补全非空标题 |
-| content | 字符串，最多 5000 字符，可为空串；与不可改写的通知原文 content 分开保存 |
+| content | 字符串，最多 10000 字符，可为空串；与不可改写的通知原文 content 分开保存 |
 | deadline | 带时区的合法 ISO 日期时间字符串，或 `null`；不推算模糊日期 |
-| deadlineText | 字符串，最多 5000 字符，没有时间描述为空串 |
+| deadlineText | 字符串，最多 10000 字符，没有时间描述为空串 |
 | confidence | 0 到 1 的有限数字，不能是字符串或布尔值，仅供参考 |
+| deadlineDate（可选） | 合法 YYYY-MM-DD 或 null；仅确定日期、未确定时刻时使用，与非 null deadline 互斥 |
+| dateWarning（可选） | 字符串；有歧义、已过参考日期等情况下提示人工确认 |
+| referenceTime（可选） | 带时区 ISO 时间；日期推算参考值，不改变通知录入 time |
 
 B：仅在 HTTP 调用成功且 `payload.success === true` 后，使用一次写入同时保存识别结果和 pending 状态：
 
@@ -72,14 +76,14 @@ try {
 
 // 仅在用户点击确认后执行；confirmedForm 为用户核对、编辑后的表单值。
 try {
-  const { title, course, content, deadline, deadlineText } = confirmedForm;
-  await createTaskFromNotification(selectedId, { title, course, content, deadline, deadlineText });
+  const { title, type, course, content, deadline, deadlineDate, deadlineText } = confirmedForm;
+  await createTaskFromNotification(selectedId, { title, type, course, content, deadline, deadlineDate, deadlineText });
 } catch (error) {
   // 处理重复任务、来源失效、校验或存储失败；重新读取实际状态。
 }
 ```
 
-不要直接把整个 extraction 传给 `createTaskFromNotification()`：`type`、`confidence` 不属于任务字段，会被拒绝。
+不要直接把整个 extraction 传给 `createTaskFromNotification()`：`confidence`、`dateWarning`、`referenceTime` 不属于任务字段，会被拒绝；type 现在可作为任务类型传入。
 成功生成任务后模块才设置 confirmed，同时保留 extraction 原始草稿；人工修改后的任务字段存入任务，不覆盖通知原文。
 既有手工任务生成流程不要求必须有 extraction 或 pending 状态，保持兼容。
 两方继续使用 `subscribe()` 在保存后重新读取；同页事件与同源跨标签事件机制不变。
@@ -92,6 +96,19 @@ try {
 `confirmed` 只能由 `createTaskFromNotification` 在任务成功生成后设置（带来源的 `addTask` 也会进入此流程）。`addNotification` 仅允许以 `none` 或 `pending` 初始化；`updateNotification` 不允许直接传入 `extractionStatus: 'confirmed'`，即使原状态已经是 confirmed 也会抛出 `VALIDATION`。尚未确认的通知仍允许在 none / pending 之间切换；已确认通知可正常编辑其他允许字段，但不能撤销提取状态。
 
 任务必填 `title`；`course`、`content`、`deadlineText` 默认空串，`deadline` 和 `sourceNotificationId` 默认 null，`status` 默认 `pending`。`id`、`createdAt`、`completedAt` 由模块生成。
+
+新增任务还包含 `type`（默认 other）、`deadlineDate`（默认 null）和只读 `sourceKind`（manual / notification）。手动任务使用 `sourceNotificationId: null`，不创建伪通知。旧任务缺少这些新字段仍能读取，来源按 sourceNotificationId 推断，不迁移存储。通知生成任务表示“通知来源、经人工确认”，不声称每条都调用过 AI。
+
+```js
+const task = await createManualTask({
+  title: '复习线性代数', type: 'assignment', course: '线性代数',
+  content: '复习第二章', deadline: null, deadlineDate: '2026-11-28', deadlineText: '',
+});
+await updateTask(task.id, { status: 'completed' });
+await updateTask(task.id, { status: 'pending' });
+```
+
+手动任务和通知任务共用更新、完成、重开、统计与持久化。切换日期精度时同时清空另一字段，例如 `{deadline: iso, deadlineDate: null}`。
 
 ### addTask 的来源处理
 
@@ -111,11 +128,16 @@ try {
 任务弹窗只有一个尚未 confirmed 的候选时自动选择并预填；多个候选由用户选择，不自动生成任务。
 
 AI 日期规则：完整中文年月日及明确时刻在未标注时区时采用校园默认北京时间（UTC+08:00），例如 `2026年11月28日20:00前` 对应 `2026-11-28T20:00:00+08:00`。
-缺少年份/时刻、相对时间、多个冲突时间不推算；明确其他时区不得套用北京时间。前端日期表单和展示转换为浏览器本地时间，保存为带时区 ISO，`deadlineText` 保留原文含义。
+新前端发送 `{content, referenceTime}`；referenceTime 默认通知开始录入时刻，参考日期可在表单修正，时区采用北京时间。今天、明天、本周（周一至周日）、下周按该参考推算。缺少时刻保存 deadlineDate，不补午夜或 23:59。多候选、无法确认的时区、上午/下午含糊等显示 dateWarning。日期表单和截止时间展示统一北京时间，保存为带时区 ISO，deadlineText 原样保留。仅 `{content}` 的旧客户端保留原有保守规则。
+
+不完整日期采用**建议值**：只有“24号”等日号时，优先参考原通知中唯一的年月上下文或本月/下月/上月线索；无月份线索时建议参考日期起最近的有效日号（包含当天），可能跨月、跨年。缺少年份的月日选择离参考日期最近的有效年份（检查前后四年以覆盖闰日）；有唯一明确年份上下文时优先使用它。上下文冲突或非法日期不强行补全。
+
+凡补全年月，dateWarning 都包含 **“推断日期，待确认”**，并说明依据；已过日期/时刻会补充提醒。deadline / deadlineDate 在 extraction 中只是草稿建议，不能据此自动确认或生成任务。任务确认表单预填建议值，并在日期输入框旁持续显示提示，用户可修改。成功确认只保存用户最终表单值，通知 extraction 和原始 deadlineText 不被改写。旧数据结构不变，不新增独立推断状态。
 
 - `getDashboardStats()`：通知总数 notificationCount、未读通知数 unreadCount、pending 任务数 pendingTaskCount、**未读且重要的通知数** importantCount。重要任务不另行累加，避免重复统计。
 - `getTodayHighlights()`：返回浏览器本地日历日期为今天的**全部通知，不只是重要通知**，包含普通通知以及已读通知；重要优先，同等重要程度下按 time 倒序。返回通知数组。
-- `getRecentTasks()`：返回最多五条 pending 任务；按截止时间升序（包含逾期任务），null 排最后，同截止时间按 createdAt 倒序。返回任务数组。
+- `getRecentTasks()`：返回最多五条 pending 任务，使用 `comparePendingTasks(a,b)`；任务页使用同一比较器。逾期优先，截止日期/时间升序，无日期最后；相同截止值按 createdAt 升序，再按 ID 排序，保证稳定。已完成任务单独按创建时间倒序，不参与待完成排序。
+- `isTaskOverdue(task, now?)`：精确时间与 now 比较；仅日期任务在北京时间次日才逾期。仅日期的排序键使用当日零时，但不会作为截止时刻存储或展示。
 
 ## 存储与错误
 

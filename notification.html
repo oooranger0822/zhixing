@@ -59,7 +59,12 @@
         </div>
         <div class="form-field form-content">
           <label for="contentInput">内容</label>
-          <input id="contentInput" name="content" type="text" maxlength="200" placeholder="请输入群消息内容" required>
+          <textarea id="contentInput" name="content" rows="5" placeholder="请输入群消息内容" aria-describedby="contentCount" required></textarea>
+          <small id="contentCount" role="status">0 / 10000 字符</small>
+        </div>
+        <div class="form-field">
+          <label for="referenceDateInput">时间参考日期（北京时间，可修正）</label>
+          <input id="referenceDateInput" type="date" required>
         </div>
         <div class="form-field">
           <label for="typeInput">分类</label>
@@ -85,7 +90,7 @@
 
         <section class="ai-result" id="aiResult" hidden aria-label="AI 识别结果">
           <div class="ai-result-head">
-            <strong>AI 识别结果（已保存为待确认）</strong>
+            <strong>AI 识别结果（请人工核对）</strong>
             <button class="ai-result-close" id="aiResultClose" type="button" aria-label="关闭">×</button>
           </div>
           <dl class="ai-result-list">

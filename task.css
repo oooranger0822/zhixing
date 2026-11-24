@@ -604,6 +604,34 @@ body.modal-open { overflow: hidden; }
 }
 .btn-primary:disabled { opacity: .55; cursor: not-allowed; }
 
+.form-field select { width: 100%; min-width: 0; padding: 10px 12px; font: inherit; color: inherit; border: 1px solid var(--line); border-radius: 9px; background: white; }
+.form-field input, .form-field textarea { min-width: 0; max-width: 100%; }
+.source-link, .task-title, .task-desc, .detail-title, .detail-content { overflow-wrap: anywhere; }
+.modal-body { min-height: 0; }
+.modal-header, .modal-footer { flex-shrink: 0; }
+#notificationPicker[hidden] { display: none; }
+
+@media (max-width: 768px) {
+  body { min-width: 0; }
+  .panel-header { flex-wrap: wrap; }
+  .header-actions { flex-wrap: wrap; width: 100%; }
+  .header-actions .extract-btn { flex: 1; justify-content: center; padding: 0 10px; min-height: 44px; }
+  .task-panel, .task-card, .detail-card { min-width: 0; }
+  .task-bottom { flex-wrap: wrap; gap: 10px; }
+  .task-deadline { overflow-wrap: anywhere; }
+  .toggle-btn { min-height: 44px; }
+  .task-page { padding: 20px 12px; }
+  .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .stat-card { padding: 12px 8px; }
+  .notice-option { align-items: flex-start; gap: 6px; padding: 12px 8px; }
+  .notice-content { white-space: normal; overflow-wrap: anywhere; }
+  .notice-sender, .notice-meta { overflow-wrap: anywhere; }
+  .modal { max-height: 92dvh; }
+  .modal-close, .detail-close, .btn-primary, .btn-secondary { min-width: 44px; min-height: 44px; }
+  .modal-footer { padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+  .form-field input, .form-field textarea, .form-field select { font-size: 16px; min-height: 44px; }
+}
+
 @media (max-width: 480px) {
   .modal-overlay { padding: 0; align-items: end; }
   .modal { width: 100%; max-height: 92vh; border-radius: 20px 20px 0 0; }
